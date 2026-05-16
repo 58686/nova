@@ -4,12 +4,14 @@ import { useAIConfigStore } from '../stores/aiConfigStore'
 import { useAppStore } from '../stores/appStore'
 
 interface HeaderProps {
-  activePanel?: 'preview' | 'versions'
+  activePanel?: 'preview' | 'versions' | 'canvas'
   onToggleVersions?: () => void
+  onToggleCanvas?: () => void
   onOpenAIConfig?: () => void
+  onOpenSettings?: () => void
 }
 
-export default function Header({ activePanel = 'preview', onToggleVersions, onOpenAIConfig }: HeaderProps) {
+export default function Header({ activePanel = 'preview', onToggleVersions, onToggleCanvas, onOpenAIConfig, onOpenSettings }: HeaderProps) {
   const {
     currentProject,
     generatedCode,
@@ -41,38 +43,33 @@ export default function Header({ activePanel = 'preview', onToggleVersions, onOp
   }, [])
 
   return (
-    <header className="shell-panel flex h-[84px] shrink-0 items-center justify-between rounded-[28px] px-4 md:px-5">
-      <div className="flex min-w-0 items-center gap-4">
+    <header className="shell-panel relative z-[50] flex h-[56px] shrink-0 items-center justify-between rounded-[22px] px-3 md:px-4">
+      <div className="flex min-w-0 items-center gap-3">
         <button className="btn-icon shrink-0" onClick={toggleSidebar} title={text('切换侧边栏', 'Toggle sidebar')}>
-          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 6h16M4 12h10M4 18h16" />
           </svg>
         </button>
 
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
           <div
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[18px]"
-            style={{ background: 'var(--gradient-brand)', boxShadow: 'var(--shadow-md)' }}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[11px]"
+            style={{ background: 'var(--gradient-brand)', boxShadow: 'var(--shadow-sm)' }}
           >
-            <svg className="h-6 w-6 fill-white" viewBox="0 0 24 24">
+            <svg className="h-4 w-4 fill-white" viewBox="0 0 24 24">
               <path d="M4 4h4v16H4V4Zm4 0h4l6 16h-4L9.5 8.5 8 20H4L8 4Z" />
             </svg>
           </div>
 
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-[-0.02em] text-gradient">Nova</h1>
-              <span className="badge badge-accent">{text('专注构建', 'Focused Builder')}</span>
-            </div>
-            <p className="truncate text-sm" style={{ color: 'var(--text-secondary)' }}>
-              {currentProject?.name || text('项目工作区，集中管理提示词、预览与版本。', 'Project workspace for prompts, preview, and version control.')}
-            </p>
+          <div className="flex items-center gap-2">
+            <h1 className="text-base font-semibold tracking-[-0.02em] text-gradient">Nova</h1>
+            <span className="badge badge-accent">{text('专注构建', 'Focused Builder')}</span>
           </div>
         </div>
 
         {currentProject && (
           <>
-            <div className="hidden h-10 w-px md:block" style={{ background: 'var(--border-subtle)' }} />
+            <div className="hidden h-6 w-px md:block" style={{ background: 'var(--border-subtle)' }} />
             <div ref={projectMenuRef} className="relative hidden min-w-0 md:block">
               <button className="toolbar-chip max-w-[280px]" onClick={() => setShowProjectMenu((prev) => !prev)}>
                 <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -144,6 +141,13 @@ export default function Header({ activePanel = 'preview', onToggleVersions, onOp
             <span>{isPreviewFocused ? text('退出聚焦', 'Exit Focus') : text('聚焦预览', 'Focus Preview')}</span>
           </button>
 
+          <button className="toolbar-chip" data-active={activePanel === 'canvas'} onClick={onToggleCanvas}>
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z" />
+            </svg>
+            <span>{text('画布', 'Canvas')}</span>
+          </button>
+
           <button className="toolbar-chip" data-active={activePanel === 'versions'} onClick={onToggleVersions}>
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
@@ -166,6 +170,16 @@ export default function Header({ activePanel = 'preview', onToggleVersions, onOp
         >
           {generatedCode ? text('页面已就绪', 'Page ready') : text('等待生成', 'Waiting for generation')}
         </div>
+
+        <button
+          className="btn-icon"
+          onClick={onOpenSettings}
+          title={text('数据存储设置', 'Data Storage Settings')}
+        >
+          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2Z" />
+          </svg>
+        </button>
 
         <button className="btn btn-primary relative" onClick={onOpenAIConfig}>
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

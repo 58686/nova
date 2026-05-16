@@ -84,16 +84,27 @@ function apiProxyPlugin(): Plugin {
 
               // 转发响应
               res.statusCode = response.status
-              res.setHeader('Content-Type', 'application/json')
-              
-              const responseText = await response.text()
-              
-              // 检查响应是否成功
+              const contentType = response.headers.get('content-type') || 'application/json'
+              res.setHeader('Content-Type', contentType)
+
               if (!response.ok) {
-                console.error(`[Proxy] API error: ${responseText}`)
+                const errorText = await response.text()
+                console.error(`[Proxy] API error: ${errorText.slice(0, 200)}`)
+                res.end(errorText)
+              } else {
+                const reader = (response.body as any).getReader()
+                const pump = async () => {
+                  while (true) {
+                    const { done, value } = await reader.read()
+                    if (done) { res.end(); break }
+                    res.write(value)
+                  }
+                }
+                pump().catch((err: Error) => {
+                  console.error('[Proxy] Stream error:', err.message)
+                  res.end()
+                })
               }
-              
-              res.end(responseText)
             } catch (fetchError: any) {
               clearTimeout(timeout)
               if (fetchError.name === 'AbortError') {

@@ -13,13 +13,27 @@ import {
 } from '../services/ai'
 import { DEFAULT_LOCALE, Locale, pickLocale } from '../locale'
 
+export type DeviceType = 'mobile' | 'tablet' | 'desktop'
+
+export interface Page {
+  id: string
+  name: string
+  path: string
+  code: string
+  deviceType?: DeviceType
+  createdAt: number
+  updatedAt: number
+}
+
 export interface Project {
   id: string
   name: string
   description: string
   code: string
+  pages?: Page[]
   createdAt: number
   updatedAt: number
+  dirName?: string
 }
 
 export interface Version {
@@ -88,6 +102,15 @@ interface AppState {
   currentProject: Project | null
   setCurrentProject: (project: Project | null) => void
 
+  currentPageId: string | null
+  projectPages: Page[]
+  setCurrentPage: (pageId: string) => void
+  addPage: (name: string, path: string, deviceType?: DeviceType) => void
+  updatePageDeviceType: (pageId: string, deviceType: DeviceType) => void
+  deletePage: (pageId: string) => void
+  updateCurrentPageCode: (code: string) => void
+  updatePageCode: (pageId: string, code: string) => void
+
   versions: Version[]
   addVersion: (payload: {
     code: string
@@ -140,6 +163,8 @@ interface AppState {
   togglePreviewFocus: () => void
   showSidebar: boolean
   toggleSidebar: () => void
+  chatCollapsed: boolean
+  toggleChatCollapsed: () => void
 
   error: string | null
   setError: (error: string | null) => void
@@ -215,6 +240,10 @@ function loadProjectsFromStorage(): Project[] {
   }
 }
 
+function writeProjectFileSafe(projectDirName: string, fileName: string, content: string) {
+  window.electronAPI?.writeProjectFile?.({ projectDirName, fileName, content })?.catch?.(() => {})
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   locale: loadLocaleFromStorage(),
   setLocale: (locale) => {
@@ -254,7 +283,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     savePreset(preset)
     set({
       presets: getPresets(),
-      success: pickLocale(get().locale, `预设“${name}”已保存`, `Preset "${name}" saved`),
+      success: pickLocale(get().locale, `预设"${name}"已保存`, `Preset "${name}" saved`),
     })
     setTimeout(() => set({ success: null }), 3000)
   },
@@ -281,29 +310,126 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   currentProject: null,
   setCurrentProject: (project) => {
-    set({ currentProject: project })
-
     if (!project) {
       set({
+        currentProject: null,
         messages: [],
         generatedCode: '',
         versions: [],
         activeVersionId: null,
         variantCandidates: [],
+        currentPageId: null,
+        projectPages: [],
       })
       return
     }
 
+    // Migrate: ensure project has at least one page
+    let pages: Page[] = project.pages?.length ? project.pages : []
+    if (pages.length === 0) {
+      const defaultPage: Page = {
+        id: nanoid(),
+        name: '首页',
+        path: '/',
+        code: project.code || '',
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+      }
+      pages = [defaultPage]
+      const migratedProject = { ...project, pages }
+      const projectId = project.id
+      const updatedProjects = get().projects.map((p) => p.id === projectId ? migratedProject : p)
+      set({ projects: updatedProjects })
+      localStorage.setItem('nova-projects', JSON.stringify(updatedProjects))
+      project = migratedProject
+    }
+
     const messages = loadMessagesFromStorage(project.id)
     const versions = loadVersionsFromStorage(project.id)
+    const firstPage = pages[0]
 
     set({
+      currentProject: project,
       messages,
-      generatedCode: project.code || '',
+      generatedCode: firstPage.code || '',
       versions,
       activeVersionId: versions.at(-1)?.id || null,
       variantCandidates: [],
+      currentPageId: firstPage.id,
+      projectPages: pages,
     })
+  },
+
+  currentPageId: null,
+  projectPages: [],
+  setCurrentPage: (pageId) => {
+    const { projectPages } = get()
+    const page = projectPages.find((p) => p.id === pageId)
+    if (!page) return
+    set({ currentPageId: pageId, generatedCode: page.code })
+  },
+  addPage: (name, path, deviceType = 'mobile') => {
+    const { currentProject, projectPages, projects } = get()
+    if (!currentProject) return
+
+    const newPage: Page = { id: nanoid(), name, path, code: '', deviceType, createdAt: Date.now(), updatedAt: Date.now() }
+    const updatedPages = [...projectPages, newPage]
+    const updatedProject = { ...currentProject, pages: updatedPages }
+    const updatedProjects = projects.map((p) => p.id === currentProject.id ? updatedProject : p)
+
+    set({ projectPages: updatedPages, currentProject: updatedProject, currentPageId: newPage.id, generatedCode: '', projects: updatedProjects })
+    localStorage.setItem('nova-projects', JSON.stringify(updatedProjects))
+  },
+  updatePageDeviceType: (pageId, deviceType) => {
+    const { currentProject, projectPages, projects } = get()
+    if (!currentProject) return
+    const updatedPages = projectPages.map((p) => p.id === pageId ? { ...p, deviceType } : p)
+    const updatedProject = { ...currentProject, pages: updatedPages }
+    const updatedProjects = projects.map((p) => p.id === currentProject.id ? updatedProject : p)
+    set({ projectPages: updatedPages, currentProject: updatedProject, projects: updatedProjects })
+    localStorage.setItem('nova-projects', JSON.stringify(updatedProjects))
+  },
+  deletePage: (pageId) => {
+    const { currentProject, projectPages, currentPageId, projects } = get()
+    if (!currentProject || projectPages.length <= 1) return
+
+    const updatedPages = projectPages.filter((p) => p.id !== pageId)
+    const updatedProject = { ...currentProject, pages: updatedPages }
+    const updatedProjects = projects.map((p) => p.id === currentProject.id ? updatedProject : p)
+    const nextPage = currentPageId === pageId ? updatedPages[0] : projectPages.find((p) => p.id === currentPageId)!
+
+    set({ projectPages: updatedPages, currentProject: updatedProject, currentPageId: nextPage.id, generatedCode: nextPage.code, projects: updatedProjects })
+    localStorage.setItem('nova-projects', JSON.stringify(updatedProjects))
+  },
+  updateCurrentPageCode: (code) => {
+    const { currentProject, currentPageId, projectPages, projects } = get()
+    if (!currentProject || !currentPageId) return
+
+    const updatedPages = projectPages.map((p) => p.id === currentPageId ? { ...p, code, updatedAt: Date.now() } : p)
+    const firstPageCode = updatedPages[0]?.code ?? code
+    const updatedProject = { ...currentProject, pages: updatedPages, code: firstPageCode, updatedAt: Date.now() }
+    const updatedProjects = projects.map((p) => p.id === currentProject.id ? updatedProject : p)
+
+    set({ projectPages: updatedPages, currentProject: updatedProject, projects: updatedProjects })
+    localStorage.setItem('nova-projects', JSON.stringify(updatedProjects))
+
+    if (currentProject.dirName) {
+      const page = updatedPages.find((p) => p.id === currentPageId)
+      if (page) {
+        const fileName = page.path === '/' ? 'index.html' : `${page.path.replace(/^\//, '')}.html`
+        writeProjectFileSafe(currentProject.dirName, fileName, code)
+      }
+    }
+  },
+  updatePageCode: (pageId, code) => {
+    const { currentProject, projectPages, projects } = get()
+    if (!currentProject) return
+    const updatedPages = projectPages.map((p) => p.id === pageId ? { ...p, code, updatedAt: Date.now() } : p)
+    const firstPageCode = updatedPages[0]?.code ?? ''
+    const updatedProject = { ...currentProject, pages: updatedPages, code: firstPageCode, updatedAt: Date.now() }
+    const updatedProjects = projects.map((p) => p.id === currentProject.id ? updatedProject : p)
+    set({ projectPages: updatedPages, currentProject: updatedProject, projects: updatedProjects })
+    localStorage.setItem('nova-projects', JSON.stringify(updatedProjects))
   },
 
   versions: [],
@@ -327,6 +453,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updatedVersions = [...versions, newVersion]
     set({ versions: updatedVersions, activeVersionId: newVersion.id })
     saveVersionsToStorage(currentProject.id, updatedVersions)
+
+    if (currentProject.dirName) {
+      writeProjectFileSafe(currentProject.dirName, `versions/${newVersion.id}.html`, code)
+    }
+
     return newVersion.id
   },
   restoreVersion: (versionId) => {
@@ -366,9 +497,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   projects: loadProjectsFromStorage(),
   addProject: (project) => {
+    const defaultPage: Page = { id: nanoid(), name: '首页', path: '/', code: '', createdAt: Date.now(), updatedAt: Date.now() }
     const newProject: Project = {
       ...project,
       id: nanoid(),
+      pages: [defaultPage],
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }
@@ -382,8 +515,39 @@ export const useAppStore = create<AppState>((set, get) => ({
       variantCandidates: [],
       generatedCode: '',
       versions: [],
+      currentPageId: defaultPage.id,
+      projectPages: [defaultPage],
     })
     localStorage.setItem('nova-projects', JSON.stringify(projects))
+
+    // Async: create project dir in the configured data directory
+    if (window.electronAPI?.createProjectDir) {
+      window.electronAPI.createProjectDir()
+        .then((dirName) => {
+          if (!dirName) return
+          const withDir: Project = { ...newProject, dirName }
+          const updated = get().projects.map((p) => (p.id === newProject.id ? withDir : p))
+          set({
+            projects: updated,
+            currentProject: get().currentProject?.id === newProject.id ? withDir : get().currentProject,
+          })
+          localStorage.setItem('nova-projects', JSON.stringify(updated))
+
+          return window.electronAPI!.writeProjectFile({
+            projectDirName: dirName,
+            fileName: 'meta.json',
+            content: JSON.stringify({
+              id: withDir.id,
+              name: withDir.name,
+              description: withDir.description,
+              createdAt: withDir.createdAt,
+              updatedAt: withDir.updatedAt,
+              dirName,
+            }, null, 2),
+          })
+        })
+        .catch((e) => console.warn('Project dir creation failed:', e))
+    }
   },
   updateProject: (id, updates) => {
     const projects = get().projects.map((project) =>
@@ -396,9 +560,25 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     set({ projects, currentProject })
     localStorage.setItem('nova-projects', JSON.stringify(projects))
+
+    const project = projects.find((p) => p.id === id)
+    if (project?.dirName) {
+      if (updates.code !== undefined) {
+        writeProjectFileSafe(project.dirName, 'page.html', updates.code)
+      }
+      writeProjectFileSafe(project.dirName, 'meta.json', JSON.stringify({
+        id: project.id,
+        name: project.name,
+        description: project.description,
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+        dirName: project.dirName,
+      }, null, 2))
+    }
   },
   deleteProject: (id) => {
-    const projects = get().projects.filter((project) => project.id !== id)
+    const project = get().projects.find((p) => p.id === id)
+    const projects = get().projects.filter((p) => p.id !== id)
     const isCurrentProject = get().currentProject?.id === id
 
     set({
@@ -409,11 +589,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       messages: isCurrentProject ? [] : get().messages,
       generatedCode: isCurrentProject ? '' : get().generatedCode,
       versions: isCurrentProject ? [] : get().versions,
+      currentPageId: isCurrentProject ? null : get().currentPageId,
+      projectPages: isCurrentProject ? [] : get().projectPages,
     })
 
     localStorage.setItem('nova-projects', JSON.stringify(projects))
     localStorage.removeItem(`nova-messages-${id}`)
     localStorage.removeItem(`nova-versions-${id}`)
+
+    if (project?.dirName && window.electronAPI?.deleteProjectDir) {
+      window.electronAPI.deleteProjectDir({ projectDirName: project.dirName }).catch(() => {})
+    }
   },
 
   messages: [],
@@ -424,6 +610,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { currentProject } = get()
     if (currentProject) {
       saveMessages(currentProject.id, newMessages)
+      if (currentProject.dirName) {
+        writeProjectFileSafe(currentProject.dirName, 'messages.json', JSON.stringify(newMessages, null, 2))
+      }
     }
   },
   clearMessages: () => {
@@ -432,6 +621,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { currentProject } = get()
     if (currentProject) {
       saveMessages(currentProject.id, [])
+      if (currentProject.dirName) {
+        writeProjectFileSafe(currentProject.dirName, 'messages.json', '[]')
+      }
     }
   },
   loadMessages: (projectId) => {
@@ -472,6 +664,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   togglePreviewFocus: () => set({ isPreviewFocused: !get().isPreviewFocused }),
   showSidebar: true,
   toggleSidebar: () => set({ showSidebar: !get().showSidebar }),
+  chatCollapsed: false,
+  toggleChatCollapsed: () => set({ chatCollapsed: !get().chatCollapsed }),
 
   error: null,
   setError: (error) => set({ error }),

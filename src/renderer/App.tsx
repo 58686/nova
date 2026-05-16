@@ -1,26 +1,34 @@
 import { useEffect, useState } from 'react'
 import AIConfigManager from './components/AIConfigManager'
 import APITester from './components/APITester'
+import CanvasView from './components/CanvasView'
 import ChatPanel from './components/ChatPanel'
 import Header from './components/Header'
 import PreviewPanel from './components/PreviewPanel'
+import SettingsModal from './components/SettingsModal'
 import Sidebar from './components/Sidebar'
 import ToastContainer from './components/ToastContainer'
 import VersionHistory from './components/VersionHistory'
 import { useLocale } from './hooks/useLocale'
 import { useKeyboard } from './hooks/useKeyboard'
 import { useAppStore } from './stores/appStore'
+import { useSettingsStore } from './stores/settingsStore'
 
-type RightPanel = 'preview' | 'versions'
-type ModalPanel = 'ai-config' | null
+type RightPanel = 'preview' | 'versions' | 'canvas'
+type ModalPanel = 'ai-config' | 'settings' | null
 
 function App() {
   const { showSidebar, generatedCode, isPreviewFocused, setPreviewFocused } = useAppStore()
   const { locale, text } = useLocale()
+  const { load: loadSettings } = useSettingsStore()
   const [rightPanel, setRightPanel] = useState<RightPanel>('preview')
   const [modalPanel, setModalPanel] = useState<ModalPanel>(null)
 
   useKeyboard()
+
+  useEffect(() => {
+    loadSettings()
+  }, [])
 
   const hasGeneratedCode = generatedCode.trim().length > 0
   const showFocusedPreview = isPreviewFocused && hasGeneratedCode
@@ -54,7 +62,9 @@ function App() {
         <Header
           activePanel={showFocusedPreview ? 'preview' : rightPanel}
           onOpenAIConfig={() => setModalPanel('ai-config')}
+          onOpenSettings={() => setModalPanel('settings')}
           onToggleVersions={() => setRightPanel((prev) => (prev === 'versions' ? 'preview' : 'versions'))}
+          onToggleCanvas={() => setRightPanel((prev) => (prev === 'canvas' ? 'preview' : 'canvas'))}
         />
 
         <main className={`flex min-h-0 flex-1 ${showFocusedPreview ? 'gap-0' : 'gap-3'}`}>
@@ -69,6 +79,8 @@ function App() {
 
             {showFocusedPreview ? (
               <PreviewPanel focused />
+            ) : rightPanel === 'canvas' ? (
+              <CanvasView onSwitchToPreview={() => setRightPanel('preview')} />
             ) : rightPanel === 'preview' ? (
               <PreviewPanel />
             ) : (
@@ -139,6 +151,10 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {modalPanel === 'settings' && (
+        <SettingsModal onClose={() => setModalPanel(null)} />
       )}
 
       <ToastContainer />

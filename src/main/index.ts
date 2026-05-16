@@ -1,6 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
+import { loadSettings, saveSettings, NovaSettings } from './settings'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -128,6 +130,114 @@ ipcMain.handle(
     }
   },
 )
+
+// ── Open in browser ───────────────────────────────────────────────────────────
+
+ipcMain.handle('open-in-browser', async (event, html: string) => {
+  const tmpFile = path.join(os.tmpdir(), `nova-preview-${Date.now()}.html`)
+  try {
+    fs.writeFileSync(tmpFile, html, 'utf-8')
+    const fileUrl = 'file:///' + tmpFile.replace(/\\/g, '/')
+    await shell.openExternal(fileUrl)
+    return { success: true }
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'Failed to open in browser' }
+  }
+})
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+ipcMain.handle('get-settings', () => {
+  return loadSettings()
+})
+
+ipcMain.handle('save-settings', (event, settings: NovaSettings) => {
+  saveSettings(settings)
+  return { success: true }
+})
+
+ipcMain.handle('select-data-dir', async () => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    properties: ['openDirectory', 'createDirectory'],
+    title: '选择项目数据目录 / Select Project Data Directory',
+  })
+
+  if (!result.canceled && result.filePaths.length > 0) {
+    return result.filePaths[0]
+  }
+  return null
+})
+
+// ── Project file I/O ──────────────────────────────────────────────────────────
+
+ipcMain.handle('create-project-dir', () => {
+  const settings = loadSettings()
+  if (!settings.dataDir) return null
+
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const dirName = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+
+  fs.mkdirSync(path.join(settings.dataDir, dirName, 'versions'), { recursive: true })
+
+  return dirName
+})
+
+ipcMain.handle('write-project-file', (event, payload: { projectDirName: string; fileName: string; content: string }) => {
+  const settings = loadSettings()
+  if (!settings.dataDir) return { success: false, error: 'No data directory configured' }
+
+  const filePath = path.join(settings.dataDir, payload.projectDirName, payload.fileName)
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, payload.content, 'utf-8')
+  return { success: true }
+})
+
+ipcMain.handle('read-project-file', (event, payload: { projectDirName: string; fileName: string }) => {
+  const settings = loadSettings()
+  if (!settings.dataDir) return null
+
+  try {
+    return fs.readFileSync(path.join(settings.dataDir, payload.projectDirName, payload.fileName), 'utf-8')
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle('list-project-dirs', () => {
+  const settings = loadSettings()
+  if (!settings.dataDir) return []
+
+  try {
+    const entries = fs.readdirSync(settings.dataDir, { withFileTypes: true })
+    return entries
+      .filter((e) => e.isDirectory() && /^\d{14}$/.test(e.name))
+      .map((e) => {
+        try {
+          const meta = JSON.parse(fs.readFileSync(path.join(settings.dataDir!, e.name, 'meta.json'), 'utf-8'))
+          return { dirName: e.name, meta }
+        } catch {
+          return null
+        }
+      })
+      .filter(Boolean)
+      .sort((a: any, b: any) => a.dirName.localeCompare(b.dirName))
+  } catch {
+    return []
+  }
+})
+
+ipcMain.handle('delete-project-dir', (event, payload: { projectDirName: string }) => {
+  const settings = loadSettings()
+  if (!settings.dataDir) return { success: false }
+
+  try {
+    fs.rmSync(path.join(settings.dataDir, payload.projectDirName), { recursive: true, force: true })
+    return { success: true }
+  } catch {
+    return { success: false }
+  }
+})
 
 app.whenReady().then(createWindow)
 

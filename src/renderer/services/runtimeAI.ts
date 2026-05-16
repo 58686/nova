@@ -4,11 +4,27 @@ const DEFAULT_SYSTEM_PROMPT =
   'You are an expert UI designer and frontend engineer. Return only the requested HTML or text with no markdown fences unless explicitly requested.'
 
 const ANTHROPIC_MODELS = [
+  'claude-opus-4-5',
+  'claude-sonnet-4-5',
+  'claude-haiku-4-5',
+  'claude-3-7-sonnet-20250219',
   'claude-3-5-sonnet-20241022',
+  'claude-3-5-haiku-20241022',
   'claude-3-opus-20240229',
   'claude-3-haiku-20240307',
-  'claude-3-5-haiku-20241022',
 ]
+
+export type ImageData = {
+  base64: string
+  mimeType: string
+}
+
+// Providers that support image input in their messages API
+const VISION_PROVIDERS = new Set<AIProvider>(['anthropic', 'openai', 'openrouter', 'custom'])
+
+export function supportsVision(provider: AIProvider): boolean {
+  return VISION_PROVIDERS.has(provider)
+}
 
 export class RuntimeAIService {
   private config: AIConfig
@@ -21,7 +37,7 @@ export class RuntimeAIService {
     const start = Date.now()
 
     try {
-      const response = await this.generate('回复“连接成功”四个字', [], true)
+      const response = await this.generate('回复"连接成功"四个字', [], true)
       return {
         success: true,
         latency: Date.now() - start,
@@ -37,14 +53,14 @@ export class RuntimeAIService {
     }
   }
 
-  async generate(prompt: string, history: Message[] = [], isTest = false): Promise<string> {
+  async generate(prompt: string, history: Message[] = [], isTest = false, imageData?: ImageData): Promise<string> {
     const messages: Message[] = [...history, { role: 'user', content: prompt }]
 
     switch (this.config.provider) {
       case 'anthropic':
-        return this.callAnthropic(messages, isTest)
+        return this.callAnthropic(messages, isTest, imageData)
       case 'openrouter':
-        return this.callOpenRouter(messages, isTest)
+        return this.callOpenRouter(messages, isTest, imageData)
       case 'zhipu':
         return this.callZhipu(messages, isTest)
       case 'openai':
@@ -55,9 +71,187 @@ export class RuntimeAIService {
       case 'baichuan':
       case 'nvidia':
       case 'custom':
-        return this.callOpenAICompatible(messages, isTest)
+        return this.callOpenAICompatible(messages, isTest, imageData)
       default:
         throw new Error(`Unsupported provider: ${this.config.provider}`)
+    }
+  }
+
+  async *stream(prompt: string, history: Message[] = [], signal?: AbortSignal, imageData?: ImageData): AsyncGenerator<string, void, unknown> {
+    const messages: Message[] = [...history, { role: 'user', content: prompt }]
+
+    // Electron IPC proxy doesn't support streaming — fall back to full response
+    if (typeof window !== 'undefined' && (window as any).electronAPI?.proxyRequest) {
+      const result = await this.generate(prompt, history, false, imageData)
+      yield result
+      return
+    }
+
+    switch (this.config.provider) {
+      case 'anthropic':
+        yield* this.streamAnthropic(messages, signal, imageData)
+        break
+      case 'openrouter':
+        yield* this.streamOpenAICompatible(messages, signal, `${this.normalizeBaseUrl(this.config.baseUrl)}/v1/chat/completions`, {
+          Authorization: `Bearer ${this.config.apiKey}`,
+          'HTTP-Referer': 'https://devui.app',
+          'X-Title': 'Nova',
+        }, imageData)
+        break
+      case 'openai':
+      case 'deepseek':
+      case 'qwen':
+      case 'moonshot':
+      case 'minimax':
+      case 'baichuan':
+      case 'nvidia':
+      case 'custom':
+        yield* this.streamOpenAICompatible(messages, signal, this.buildChatUrl(), this.getAuthHeaders(this.config.provider), imageData)
+        break
+      default:
+        yield await this.generate(prompt, history)
+    }
+  }
+
+  private buildAnthropicMessages(messages: Message[], imageData?: ImageData) {
+    return messages.map((m, i) => {
+      if (i === messages.length - 1 && m.role === 'user' && imageData) {
+        return {
+          role: m.role,
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: imageData.mimeType, data: imageData.base64 },
+            },
+            { type: 'text', text: m.content },
+          ],
+        }
+      }
+      return { role: m.role, content: m.content }
+    })
+  }
+
+  private buildOpenAIMessages(messages: Message[], imageData?: ImageData) {
+    const sliced = messages.slice(-5)
+    return sliced.map((m, i) => {
+      if (i === sliced.length - 1 && m.role === 'user' && imageData) {
+        return {
+          role: m.role,
+          content: [
+            { type: 'image_url', image_url: { url: `data:${imageData.mimeType};base64,${imageData.base64}` } },
+            { type: 'text', text: m.content },
+          ],
+        }
+      }
+      return { role: m.role, content: m.content }
+    })
+  }
+
+  private async *streamAnthropic(messages: Message[], signal?: AbortSignal, imageData?: ImageData): AsyncGenerator<string, void, unknown> {
+    const url = this.getProxyUrl(`${this.normalizeBaseUrl(this.config.baseUrl)}/v1/messages`)
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.config.apiKey,
+        'anthropic-version': '2023-06-01',
+        ...this.config.customHeaders,
+      },
+      body: JSON.stringify({
+        model: this.config.model,
+        max_tokens: this.config.maxTokens,
+        temperature: this.config.temperature,
+        stream: true,
+        system: this.config.systemPrompt || DEFAULT_SYSTEM_PROMPT,
+        messages: this.buildAnthropicMessages(messages, imageData),
+      }),
+      signal,
+    })
+
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(`API error (${response.status}): ${text.slice(0, 300)}`)
+    }
+
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const chunk = decoder.decode(value, { stream: true })
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6).trim()
+          if (!data || data === '[DONE]') continue
+          try {
+            const parsed = JSON.parse(data)
+            if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
+              yield parsed.delta.text as string
+            }
+          } catch { /* skip malformed SSE lines */ }
+        }
+      }
+    } finally {
+      reader.releaseLock()
+    }
+  }
+
+  private async *streamOpenAICompatible(
+    messages: Message[],
+    signal: AbortSignal | undefined,
+    url: string,
+    extraHeaders: Record<string, string>,
+    imageData?: ImageData,
+  ): AsyncGenerator<string, void, unknown> {
+    const proxyUrl = this.getProxyUrl(url)
+    const response = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...extraHeaders,
+        ...this.config.customHeaders,
+      },
+      body: JSON.stringify({
+        model: this.config.model,
+        max_tokens: this.config.maxTokens,
+        temperature: this.config.temperature,
+        stream: true,
+        messages: [
+          { role: 'system', content: this.config.systemPrompt || DEFAULT_SYSTEM_PROMPT },
+          ...this.buildOpenAIMessages(messages, imageData),
+        ],
+      }),
+      signal,
+    })
+
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(`API error (${response.status}): ${text.slice(0, 300)}`)
+    }
+
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const chunk = decoder.decode(value, { stream: true })
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6).trim()
+          if (!data || data === '[DONE]') continue
+          try {
+            const parsed = JSON.parse(data)
+            const text = parsed.choices?.[0]?.delta?.content
+            if (text) yield text
+          } catch { /* skip malformed SSE lines */ }
+        }
+      }
+    } finally {
+      reader.releaseLock()
     }
   }
 
@@ -127,7 +321,7 @@ export class RuntimeAIService {
     return cleaned
   }
 
-  private async callAnthropic(messages: Message[], isTest: boolean): Promise<string> {
+  private async callAnthropic(messages: Message[], isTest: boolean, imageData?: ImageData): Promise<string> {
     const response = await this.performRequest(`${this.normalizeBaseUrl(this.config.baseUrl)}/v1/messages`, {
       method: 'POST',
       headers: {
@@ -140,10 +334,7 @@ export class RuntimeAIService {
         max_tokens: isTest ? 100 : this.config.maxTokens,
         temperature: this.config.temperature,
         system: this.config.systemPrompt || DEFAULT_SYSTEM_PROMPT,
-        messages: messages.map((message) => ({
-          role: message.role,
-          content: message.content,
-        })),
+        messages: this.buildAnthropicMessages(messages, isTest ? undefined : imageData),
       }),
     })
 
@@ -151,7 +342,7 @@ export class RuntimeAIService {
     return data.content?.[0]?.text || ''
   }
 
-  private async callOpenAICompatible(messages: Message[], isTest: boolean): Promise<string> {
+  private async callOpenAICompatible(messages: Message[], isTest: boolean, imageData?: ImageData): Promise<string> {
     const response = await this.performRequest(this.buildChatUrl(), {
       method: 'POST',
       headers: {
@@ -164,7 +355,7 @@ export class RuntimeAIService {
         temperature: this.config.temperature,
         messages: [
           { role: 'system', content: this.config.systemPrompt || DEFAULT_SYSTEM_PROMPT },
-          ...messages.slice(-5),
+          ...this.buildOpenAIMessages(messages, isTest ? undefined : imageData),
         ],
         ...(this.config.provider === 'nvidia' ? { stream: false } : {}),
       }),
@@ -174,7 +365,7 @@ export class RuntimeAIService {
     return data.choices?.[0]?.message?.content || ''
   }
 
-  private async callOpenRouter(messages: Message[], isTest: boolean): Promise<string> {
+  private async callOpenRouter(messages: Message[], isTest: boolean, imageData?: ImageData): Promise<string> {
     const response = await this.performRequest(`${this.normalizeBaseUrl(this.config.baseUrl)}/v1/chat/completions`, {
       method: 'POST',
       headers: {
@@ -189,7 +380,7 @@ export class RuntimeAIService {
         temperature: this.config.temperature,
         messages: [
           { role: 'system', content: this.config.systemPrompt || DEFAULT_SYSTEM_PROMPT },
-          ...messages,
+          ...this.buildOpenAIMessages(messages, isTest ? undefined : imageData),
         ],
       }),
     })
@@ -338,11 +529,11 @@ export class RuntimeAIService {
       case 'anthropic':
         return ANTHROPIC_MODELS
       case 'openai':
-        return ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo']
+        return ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo']
       case 'openrouter':
-        return ['anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'google/gemini-pro-1.5']
+        return ['anthropic/claude-opus-4-5', 'anthropic/claude-sonnet-4-5', 'anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'google/gemini-pro-1.5']
       case 'deepseek':
-        return ['deepseek-coder', 'deepseek-chat']
+        return ['deepseek-reasoner', 'deepseek-coder', 'deepseek-chat']
       case 'zhipu':
         return ['glm-4', 'glm-4-flash', 'glm-4v']
       case 'qwen':

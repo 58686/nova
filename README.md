@@ -1,95 +1,116 @@
 # Nova
 
-Nova is an AI-assisted landing page generator with a built-in preview workspace. It combines brief-based generation, iteration, version history, AI provider configuration, and HTML export in one interface.
+Nova is an AI-powered multi-page UI generator built as an Electron desktop app. Describe what you want to build in plain language, and Nova generates complete, styled HTML pages — with live preview, version history, multi-page canvas, and cross-page navigation.
 
 ## Features
 
-- Brief-driven page generation
-- Live HTML preview with desktop, tablet, and mobile viewport modes
-- Version history and restore flow
-- Focus preview mode for reviewing generated pages
-- AI provider configuration and connection testing
-- HTML copy and export support
-- Basic Electron shell and packaging configuration
+### AI Generation
+- Brief-driven page generation with direction presets (landing page, dashboard, e-commerce, etc.)
+- Conversational iteration — refine pages by chatting with the AI
+- Auto multi-page creation: when you mention linking to a new page, Nova creates and generates it automatically
+- Smart page type detection: standalone pages (login, register, 404) get independent layouts; app pages share nav and sidebar structure from existing pages
+- Design consistency enforcement: new pages inherit the color palette, typography, and component patterns of existing pages
+- Image-to-page generation (attach a reference screenshot)
+- 12 AI providers supported: Anthropic, OpenAI, DeepSeek, Moonshot, Zhipu, QwenAI, OpenRouter, MiniMax, Baichuan, NVIDIA, and custom OpenAI-compatible endpoints
+
+### Multi-page Workspace
+- Per-project page management with named routes (e.g. `/dashboard`, `/login`)
+- Browser-style tab bar with add/close controls and active page indicator
+- In-page link navigation: clicking `<a>` tags in the preview switches pages instead of navigating away
+- Page canvas: view all pages side-by-side as scaled device frames
+- Canvas supports pan (drag or scroll), zoom (Ctrl+scroll or ±% buttons), and device frame switching (mobile / tablet / desktop)
+- Click a canvas card to switch the active page
+
+### Preview
+- Live sandboxed iframe preview with desktop, tablet, and mobile viewport modes
+- Focus preview mode — expands preview to full screen for detailed review
+- Safe mode strips external scripts while preserving internal navigation
+
+### Version History
+- Every generation saves a version snapshot
+- Restore or branch from any prior version
+
+### Workspace
+- Collapsible chat/workspace panel
+- Sidebar with project list and quick switching
+- Project selector dropdown in header
+
+### Configuration & Export
+- AI provider configuration panel with connection test
+- Saved presets for quick provider switching
+- HTML copy and export (via Electron file dialog)
+- Data storage settings (localStorage-backed, no backend required)
 
 ## Tech Stack
 
-- React 18
-- TypeScript
-- Vite
-- Tailwind CSS
-- Zustand
-- Electron
+| Layer | Technology |
+|-------|-----------|
+| UI framework | React 18 + TypeScript |
+| Build tool | Vite |
+| Styling | Tailwind CSS + CSS custom properties |
+| State | Zustand |
+| Desktop shell | Electron |
+| AI abstraction | Custom `RuntimeAIService` (streaming, 12 providers) |
+| Persistence | localStorage (no server required) |
 
 ## Getting Started
 
-Requirements:
-
-- Node.js 18+
-- npm
-
-Install dependencies:
+**Requirements:** Node.js 18+, npm
 
 ```bash
+# Install dependencies
 npm install
-```
 
-Start the web app in development:
-
-```bash
+# Start renderer dev server only (port 5173)
 npm run dev
-```
 
-Build the renderer app:
-
-```bash
-npm run build
-```
-
-Preview the production build locally:
-
-```bash
-npm run preview
-```
-
-Type-check:
-
-```bash
-npm run typecheck
-```
-
-Lint:
-
-```bash
-npm run lint
-```
-
-Build Electron entry files:
-
-```bash
+# Build Electron main/preload and launch full desktop app
 npm run electron:dev
-```
 
-Package Electron app:
+# TypeScript check
+npm run typecheck
 
-```bash
+# Lint
+npm run lint
+
+# Production renderer build
+npm run build
+
+# Package desktop installer (outputs to release/)
 npm run electron:build
 ```
 
+> **VS Code note:** If Electron behaves like plain Node.js (broken APIs), it's because VS Code sets `ELECTRON_RUN_AS_NODE=1`. The `electron:dev` script uses `scripts/electron-launcher.js` to strip this env var automatically. Never run `electron .` directly from the VS Code terminal.
+
 ## Project Structure
 
-```text
+```
 src/
-  main/        Electron main and preload entry
-  renderer/    React app, stores, services, and UI components
-public/        Static assets
+  main/
+    index.ts          Electron main process — file I/O, HTTP proxy, IPC handlers
+    preload.ts        contextBridge API exposed to renderer as window.electronAPI
+  renderer/
+    components/       UI components (ChatPanel, PreviewPanel, CanvasView, Header, …)
+    stores/           Zustand stores (appStore, aiConfigStore, settingsStore)
+    services/         AI provider abstraction (runtimeAI.ts, ai.ts)
+    hooks/            useLocale, useKeyboard
+    locale/           zh-CN / en-US string selection
+scripts/
+  electron-launcher.js  Strips ELECTRON_RUN_AS_NODE before spawning Electron
+public/               Static assets
 ```
 
-## Notes
+## Key Architecture Notes
 
-- The repository includes Electron build and packaging setup, but there is currently no single npm script that launches the renderer dev server and Electron shell together.
-- Generated pages are stored in browser local storage during local use.
-- Exported HTML is intended to be directly previewable and portable.
+- All data persists to `localStorage` — there is no backend or database.
+- The renderer is a standard React SPA; in dev it loads from `http://localhost:5173`, in production from `dist/index.html`.
+- IPC channels between main and renderer: `save-file`, `load-file`, `export-html`, `proxy-request`.
+- AI streaming uses `for await` over the provider's async iterator; abort is handled via `AbortController`.
+- In-page navigation is intercepted by an injected script inside each iframe that sends `postMessage({ type: 'nova-navigate', href })` to the parent window.
+
+## Localization
+
+UI supports Chinese (zh-CN) and English (en-US). Language is stored in `localStorage` under `nova-locale` and toggled from the header.
 
 ## License
 

@@ -106,10 +106,18 @@ export default function Sidebar() {
               const isActive = currentProject?.id === project.id
 
               return (
-                <button
+                <div
                   key={project.id}
-                  className="panel-card group w-full rounded-[22px] p-4 text-left transition-all duration-200"
+                  role="button"
+                  tabIndex={0}
+                  className="panel-card group w-full cursor-pointer rounded-[22px] p-4 text-left transition-all duration-200"
                   onClick={() => setCurrentProject(project)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      setCurrentProject(project)
+                    }
+                  }}
                   style={{
                     background: isActive ? 'rgba(255,255,255,0.86)' : 'var(--bg-surface)',
                     borderColor: isActive ? 'var(--border-accent)' : 'var(--border-subtle)',
@@ -172,7 +180,7 @@ export default function Sidebar() {
                       </button>
                     )}
                   </div>
-                </button>
+                </div>
               )
             })}
           </div>

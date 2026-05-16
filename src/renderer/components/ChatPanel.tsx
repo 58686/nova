@@ -1,12 +1,13 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../hooks/useLocale'
 import { Locale } from '../locale'
-import { RuntimeAIService } from '../services/runtimeAI'
+import { ImageData, RuntimeAIService, supportsVision } from '../services/runtimeAI'
 import { useAIConfigStore } from '../stores/aiConfigStore'
 import {
   BriefFormState,
   DEFAULT_BRIEF_FORM,
   GenerationTimelineStep,
+  Page,
   useAppStore,
 } from '../stores/appStore'
 
@@ -132,7 +133,7 @@ function buildProjectName(brief: BriefFormState, locale: Locale) {
   return base.slice(0, 36)
 }
 
-function buildStructuredPrompt(brief: BriefFormState, direction: DirectionPreset) {
+function buildStructuredPrompt(brief: BriefFormState, direction: DirectionPreset, pageContext = '') {
   const sections = brief.sections
     .split(',')
     .map((item) => item.trim())
@@ -141,6 +142,7 @@ function buildStructuredPrompt(brief: BriefFormState, direction: DirectionPreset
 
   return [
     'Create a complete production-style single-page HTML experience.',
+    pageContext ? `\nMulti-page project context:\n${pageContext}\n` : '',
     `Product or brand: ${brief.product || 'A modern digital product'}.`,
     `Target audience: ${brief.audience || 'Prospective customers evaluating the offer'}.`,
     `Primary goal: ${brief.goal || 'Convince visitors and drive the main CTA'}.`,
@@ -172,6 +174,107 @@ function buildTweakPrompt(brief: BriefFormState, direction: DirectionPreset, twe
     'Current HTML artifact:',
     html,
   ].join('\n')
+}
+
+type LinkedPageInfo = { path: string; linkText: string }
+
+function extractInternalLinks(html: string): LinkedPageInfo[] {
+  const results: LinkedPageInfo[] = []
+  const seen = new Set<string>()
+  // Match full <a> tags to get href + visible text
+  const re = /<a\b[^>]*href=["']([^"'#?][^"']*?)["'][^>]*>([\s\S]*?)<\/a>/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(html)) !== null) {
+    const href = m[1].trim()
+    const innerHtml = m[2] || ''
+    const linkText = innerHtml.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 40)
+
+    if (!href) continue
+    if (/^https?:\/\//i.test(href) || /^(mailto:|tel:|javascript:|#)/i.test(href)) continue
+    // Skip non-page file extensions
+    if (/\.(log|txt|json|csv|xml|pdf|png|jpg|gif|svg|ico|css|js|woff|ttf|map)$/i.test(href)) continue
+
+    const clean = href.replace(/\.html?$/i, '').replace(/^\.\//, '')
+    const path = clean.startsWith('/') ? clean : `/${clean}`
+    if (path === '/' || seen.has(path)) continue
+    seen.add(path)
+    results.push({ path, linkText })
+  }
+  return results
+}
+
+// Pages that should have independent, full-screen layouts (no shared nav/sidebar)
+const STANDALONE_PAGE_PATTERNS = [
+  /login|signin|sign-in|log-in/i,
+  /register|signup|sign-up/i,
+  /404|not-?found|error/i,
+  /welcome|onboard/i,
+  /forgot|reset-?pass/i,
+  /verify|confirm/i,
+  /landing|splash|intro/i,
+]
+
+function isStandalonePage(path: string, name: string): boolean {
+  const text = `${path} ${name}`
+  return STANDALONE_PAGE_PATTERNS.some((re) => re.test(text))
+}
+
+function buildPageContext(pages: Page[], currentPageId: string | null): string {
+  if (pages.length <= 1) return ''
+  const current = pages.find((p) => p.id === currentPageId)
+  const others = pages.filter((p) => p.id !== currentPageId)
+  const standalone = isStandalonePage(current?.path ?? '', current?.name ?? '')
+
+  const lines = [
+    `This is the "${current?.name ?? 'current'}" page (path: ${current?.path ?? '/'}).`,
+    'This is part of a multi-page website. Other pages in this project:',
+    ...others.map((p) => `  - "${p.name}" → ${p.path}`),
+    'Link to other pages with plain relative hrefs, e.g. <a href="/about">. Do not use absolute URLs for internal links.',
+  ]
+
+  if (standalone) {
+    lines.push(
+      '',
+      'LAYOUT NOTE: This is a standalone page (login/register/error/landing). It should use a centered, full-screen layout WITHOUT any shared sidebar or main navigation. Match the color palette and typography of the project, but use an independent layout appropriate for this page type.',
+    )
+    // For standalone pages, only inject CSS tokens/variables as reference, not nav/sidebar structure
+    const ref = [...others].sort((a, b) => b.code.length - a.code.length).find((p) => p.code.trim().length > 200 && !isStandalonePage(p.path, p.name))
+    if (ref) {
+      const headBlock = ref.code.match(/<head[^>]*>[\s\S]*?<\/head>/i)?.[0] ?? ''
+      lines.push(
+        '',
+        `--- CSS TOKENS FROM "${ref.name}" (use same colors/fonts, NOT the layout) ---`,
+        headBlock.slice(0, 3000),
+        '--- END TOKENS ---',
+      )
+    }
+  } else {
+    // App-page: enforce full design consistency including nav/sidebar structure
+    const ref = [...others].sort((a, b) => b.code.length - a.code.length).find((p) => p.code.trim().length > 200 && !isStandalonePage(p.path, p.name))
+    if (ref) {
+      const html = ref.code
+      const headBlock = html.match(/<head[^>]*>[\s\S]*?<\/head>/i)?.[0] ?? ''
+      const bodyOpen = html.match(/<body[^>]*>([\s\S]{0,2500})/i)?.[0] ?? ''
+      const excerpt = (headBlock + '\n' + bodyOpen).slice(0, 7000)
+
+      lines.push(
+        '',
+        '⚠️ CRITICAL — DESIGN CONSISTENCY:',
+        `This new page MUST look like it belongs to the same product as the existing "${ref.name}" page.`,
+        'Reuse EXACTLY: the same color palette, fonts, sidebar/nav HTML structure, card styles, spacing scale, and component patterns.',
+        'Do NOT invent a new visual design. Copy the navigation, header, sidebar layout from the reference below and adapt only the page content.',
+        `--- REFERENCE HTML (${ref.name}) — copy its design system ---`,
+        excerpt,
+        '--- END REFERENCE ---',
+      )
+    }
+  }
+
+  return lines.join('\n')
+}
+
+function isNewPageRequest(instruction: string): boolean {
+  return /新(的|建|增|加)?页面|添加.{0,4}页面|跳转.{0,6}(新|其他|另一个)页面|创建.{0,6}页面|button.*new.*page|add.*page|create.*page|link.*to.*new/i.test(instruction)
 }
 
 function getVisibleTextLength(html: string): number {
@@ -273,10 +376,8 @@ export default function ChatPanel() {
     briefForm,
     currentProject,
     generatedCode,
-    generationTimeline,
     isGenerating,
     messages,
-    projects,
     setAbortController,
     setActiveGenerationLabel,
     setBriefForm,
@@ -286,8 +387,14 @@ export default function ChatPanel() {
     setGenerationTimeline,
     setSuccess,
     updateProject,
-    variantCandidates,
-    versions,
+    currentPageId,
+    projectPages,
+    setCurrentPage,
+    updateCurrentPageCode,
+    updatePageCode,
+    addPage,
+    chatCollapsed,
+    toggleChatCollapsed,
   } = useAppStore()
   const { activePresetId, presets, getActiveConfig } = useAIConfigStore()
   const { locale, text } = useLocale()
@@ -302,20 +409,45 @@ export default function ChatPanel() {
   )
   const hasContent = generatedCode.trim().length > 0
 
-  const latestTimeline = useMemo(() => {
-    const localizedMap = new Map(timelineDefinitions.map((step) => [step.id, step]))
-    const baseTimeline = generationTimeline.length > 0 ? generationTimeline : buildTimeline(timelineDefinitions)
+  const [briefOpen, setBriefOpen] = useState(!hasContent)
 
-    return baseTimeline.map((step) => ({
-      ...step,
-      ...localizedMap.get(step.id),
-      status: step.status,
-    }))
-  }, [generationTimeline, timelineDefinitions])
+  const prevHasContent = useRef(hasContent)
+  useEffect(() => {
+    if (!prevHasContent.current && hasContent) {
+      setBriefOpen(false)
+    }
+    prevHasContent.current = hasContent
+  }, [hasContent])
+
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
 
   const runtimeConfig = useMemo(() => getActiveConfig() || aiConfig, [activePresetId, aiConfig, getActiveConfig, presets])
 
-  const runGeneration = async (prompt: string, label: string, description: string) => {
+  // Image attachment state
+  const [attachedImage, setAttachedImage] = useState<ImageData & { previewUrl: string } | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = reader.result as string
+      const commaIdx = dataUrl.indexOf(',')
+      const base64 = dataUrl.slice(commaIdx + 1)
+      const mimeType = file.type || 'image/png'
+      setAttachedImage({ base64, mimeType, previewUrl: dataUrl })
+    }
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }
+
+  const visionSupported = supportsVision(runtimeConfig.provider)
+
+  const runGeneration = async (prompt: string, label: string, description: string, imageData?: ImageData, skipUserMessage = false) => {
     if (!runtimeConfig?.apiKey) {
       setError(text('请先配置 AI 提供商再开始生成。', 'Please configure an AI provider before generating.'))
       return
@@ -339,6 +471,9 @@ export default function ChatPanel() {
     const controller = new AbortController()
     const service = new RuntimeAIService(runtimeConfig)
 
+    // Show user message immediately so the chat feels responsive
+    if (!skipUserMessage) addMessage({ role: 'user', content: label })
+
     setError(null)
     setSuccess(null)
     setGenerating(true)
@@ -357,22 +492,35 @@ export default function ChatPanel() {
       updateTimelineStep(setGenerationTimeline, 'structure', 'completed')
       updateTimelineStep(setGenerationTimeline, 'visual', 'active')
 
-      const response = await service.generate(prompt, messages.slice(-4))
-      if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError')
-
       updateTimelineStep(setGenerationTimeline, 'visual', 'completed')
       updateTimelineStep(setGenerationTimeline, 'html', 'active')
 
-      let html = service.extractHTML(response)
+      let rawBuffer = ''
+      let lastPreviewUpdate = 0
+      for await (const chunk of service.stream(prompt, messages.slice(-4), controller.signal, imageData)) {
+        if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError')
+        rawBuffer += chunk
+        const now = Date.now()
+        if (now - lastPreviewUpdate > 600) {
+          const partial = service.extractHTML(rawBuffer)
+          if (partial.length > 200) setGeneratedCode(partial)
+          lastPreviewUpdate = now
+        }
+      }
+
+      let html = service.extractHTML(rawBuffer)
       if (looksLikeBlankShell(html)) {
-        const recoveryResponse = await service.generate(buildStaticRecoveryPrompt(prompt, html), messages.slice(-2))
-        html = service.extractHTML(recoveryResponse)
+        let recoveryBuffer = ''
+        for await (const chunk of service.stream(buildStaticRecoveryPrompt(prompt, html), messages.slice(-2), controller.signal)) {
+          recoveryBuffer += chunk
+        }
+        html = service.extractHTML(recoveryBuffer)
       }
       if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError')
 
       setGeneratedCode(html)
+      updateCurrentPageCode(html)
       updateProject(project.id, {
-        code: html,
         description,
         name: project.name || buildProjectName(briefForm, locale),
       })
@@ -382,11 +530,88 @@ export default function ChatPanel() {
         generationTarget: 'full-page',
         generationMode: 'single',
       })
-      addMessage({ role: 'user', content: label })
+      // User message was already added at the start; add assistant response now
       addMessage({ role: 'assistant', content: description, summary: `${selectedDirection.name} / ${description}` })
 
       updateTimelineStep(setGenerationTimeline, 'html', 'completed')
-      setSuccess(text(`${label} 已完成`, `${label} completed`))
+
+      // Notify user of completion
+      addMessage({
+        role: 'assistant',
+        content: text('✅ 页面已生成完成！你可以在右侧预览效果，或继续告诉我需要调整的地方。', '✅ Page generated! Preview it on the right, or tell me what to change.'),
+        summary: text('✅ 页面生成完成', '✅ Page generated'),
+      })
+
+      // Auto-detect linked pages from generated HTML and generate their content
+      const linkedLinks = extractInternalLinks(html)
+      const afterMainPages = useAppStore.getState().projectPages
+      const existingPaths = new Set(afterMainPages.map((p) => p.path))
+      const newLinks = linkedLinks.filter((l) => !existingPaths.has(l.path))
+
+      if (newLinks.length === 0) {
+        setSuccess(text(`${label} 已完成`, `${label} completed`))
+      } else {
+        // Create page stubs using the link text as the page name
+        type CreatedEntry = { pageId: string; linkText: string; path: string }
+        const created: CreatedEntry[] = []
+        for (const link of newLinks) {
+          const name = link.linkText || link.path.replace(/^\//, '').replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+          addPage(name, link.path)
+          const p = useAppStore.getState().projectPages.find((pg) => pg.path === link.path)
+          if (p) created.push({ pageId: p.id, linkText: link.linkText, path: link.path })
+        }
+
+        const refHtml = html
+        const currentPageName = afterMainPages.find((p) => p.id === currentPageId)?.name ?? '首页'
+        setActiveGenerationLabel(text('生成关联页面…', 'Generating linked pages…'))
+
+        for (const entry of created) {
+          if (controller.signal.aborted) break
+          const newPage = useAppStore.getState().projectPages.find((p) => p.id === entry.pageId)
+          if (!newPage) continue
+
+          const linkedPrompt = [
+            `Create the "${newPage.name}" page (path: ${newPage.path}) for this multi-page product.`,
+            entry.linkText ? `The navigation link that leads here is labeled: "${entry.linkText}". The page content should match this label's purpose and scope.` : '',
+            `This page is navigated to from the "${currentPageName}" page.`,
+            briefForm.product ? `Product/brand: ${briefForm.product}.` : '',
+            briefForm.audience ? `Target audience: ${briefForm.audience}.` : '',
+            briefForm.goal ? `Overall product goal: ${briefForm.goal}.` : '',
+            '',
+            '⚠️ CRITICAL — VISUAL CONSISTENCY (non-negotiable):',
+            'This page MUST be visually identical in design system to the reference page below.',
+            '1. Copy the EXACT same sidebar/navigation HTML structure — same links, same icons, same layout.',
+            '2. Use the EXACT same color palette, CSS variables, and typography.',
+            '3. Use the EXACT same card, table, badge, and button component styles.',
+            '4. Only change the main content area to reflect this specific page\'s purpose.',
+            'Do NOT redesign the layout. Do NOT use different colors or fonts. Treat it as extending the same product.',
+            'The output must be one complete standalone HTML document with all CSS embedded.',
+            '',
+            `--- REFERENCE HTML: "${currentPageName}" (replicate its design system completely) ---`,
+            refHtml.slice(0, 8000),
+            '--- END REFERENCE ---',
+          ].filter(Boolean).join('\n')
+
+          let linkedBuffer = ''
+          for await (const chunk of service.stream(linkedPrompt, [], controller.signal)) {
+            if (controller.signal.aborted) break
+            linkedBuffer += chunk
+          }
+          if (controller.signal.aborted) break
+
+          const linkedHtml = service.extractHTML(linkedBuffer)
+          if (linkedHtml) {
+            useAppStore.getState().updatePageCode(entry.pageId, linkedHtml)
+          }
+        }
+
+        if (!controller.signal.aborted) {
+          setSuccess(text(
+            `${label} 已完成，自动生成了 ${created.length} 个关联页面`,
+            `${label} done — auto-generated ${created.length} linked page(s)`,
+          ))
+        }
+      }
     } catch (error) {
       if ((error as Error).name !== 'AbortError') {
         failActiveTimeline(setGenerationTimeline)
@@ -400,7 +625,8 @@ export default function ChatPanel() {
   }
 
   const handleGenerate = async () => {
-    const prompt = buildStructuredPrompt(briefForm, selectedDirection)
+    const pageContext = buildPageContext(projectPages, currentPageId)
+    const prompt = buildStructuredPrompt(briefForm, selectedDirection, pageContext)
     const description = `${selectedDirection.name} / ${briefForm.goal || text('新的落地页概念', 'New landing page concept')}`
     await runGeneration(prompt, text(`生成 ${selectedDirection.name} 页面`, `Generate ${selectedDirection.name} page`), description)
   }
@@ -412,285 +638,601 @@ export default function ChatPanel() {
     await runGeneration(prompt, text(`微调：${tweak.label}`, `Tweak: ${tweak.label}`), description)
   }
 
-  const promptPreview = useMemo(() => buildStructuredPrompt(briefForm, selectedDirection), [briefForm, selectedDirection])
+  const [chatInput, setChatInput] = useState('')
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [pendingGenContext, setPendingGenContext] = useState<string | null>(null)
+
+  // Lightweight AI call to check if we need clarification
+  const runClarificationCheck = async (instruction: string): Promise<{ needsClarification: boolean; question: string }> => {
+    if (!runtimeConfig?.apiKey) return { needsClarification: false, question: '' }
+    const service = new RuntimeAIService(runtimeConfig)
+    const prompt = [
+      'You are a web page design assistant. A user wants to create a web page.',
+      'Analyze if their request has enough detail to create a useful page.',
+      'If the request is specific enough (mentions purpose, content type, or clear intent), respond exactly: [READY]',
+      'If you need more details, respond exactly: [ASK] followed by a concise question in the same language the user used.',
+      '',
+      `User: "${instruction}"`,
+      briefForm.product ? `Product context: ${briefForm.product}` : '',
+      briefForm.audience ? `Audience: ${briefForm.audience}` : '',
+    ].filter(Boolean).join('\n')
+    try {
+      const response = await service.generate(prompt, [], false)
+      if (response.includes('[ASK]')) {
+        const question = response.split('[ASK]')[1]?.trim() || text(
+          '请描述一下您想要的页面内容和用途，我可以为您更好地生成。',
+          'Could you describe what kind of page you want and its purpose?',
+        )
+        return { needsClarification: true, question }
+      }
+    } catch { /* proceed with generation on error */ }
+    return { needsClarification: false, question: '' }
+  }
+
+  // Handle new page creation from chat (e.g. "给按钮加跳转到注册页面")
+  const handleNewPageCreation = async (instruction: string) => {
+    if (!runtimeConfig?.apiKey) return
+    setIsAnalyzing(true)
+    let pageName = text('新页面', 'New Page')
+    let pagePath = `/${Date.now().toString(36)}`
+    // Try to extract page name from instruction
+    const nameMatch = instruction.match(/(?:跳转|链接|去|到|新建|创建|添加).{0,2}["「]?([^"」]{2,12})["」]?页面/)
+    if (nameMatch) {
+      pageName = nameMatch[1].trim()
+      pagePath = '/' + pageName.replace(/\s+/g, '-').toLowerCase()
+    }
+    setIsAnalyzing(false)
+
+    addPage(pageName, pagePath)
+    const newPages = useAppStore.getState().projectPages
+    const newPage = newPages.find((p) => p.path === pagePath)
+    if (!newPage) return
+
+    addMessage({ role: 'assistant', content: text(`正在为你创建「${pageName}」页面…`, `Creating "${pageName}" page…`), summary: text(`📄 创建 ${pageName}`, `📄 Creating ${pageName}`) })
+
+    const pageContext = buildPageContext(newPages, newPage.id)
+    const prompt = [
+      `Create the "${pageName}" page (path: ${pagePath}).`,
+      `Purpose based on user request: ${instruction}`,
+      briefForm.product ? `Product: ${briefForm.product}` : '',
+      briefForm.audience ? `Audience: ${briefForm.audience}` : '',
+      pageContext,
+      'Output a complete HTML document with embedded CSS. Keep it fully static.',
+    ].filter(Boolean).join('\n')
+
+    setCurrentPage(newPage.id)
+    await runGeneration(prompt, text(`生成 ${pageName}`, `Generate ${pageName}`), pageName, undefined, true)
+  }
+
+  const handleCustomChat = async () => {
+    if (!chatInput.trim() && !attachedImage) return
+    if (isGenerating || isAnalyzing) return
+
+    const instruction = chatInput.trim()
+    const imageToSend = attachedImage
+    setChatInput('')
+    setAttachedImage(null)
+
+    // Add user message immediately so chat feels responsive
+    addMessage({ role: 'user', content: instruction || text('以图生页面', 'Create page from image') })
+
+    // If user is replying to AI's clarification question
+    if (pendingGenContext) {
+      const fullContext = `${pendingGenContext}\nUser's additional details: ${instruction}`
+      setPendingGenContext(null)
+      if (generatedCode.trim()) {
+        const prompt = [
+          `Revise the landing page HTML based on: "${fullContext}"`,
+          `Visual direction: ${selectedDirection.name}. ${selectedDirection.prompt}`,
+          'Return the complete improved HTML document. Keep it fully static.',
+          'Current HTML:', generatedCode.slice(0, 12000),
+        ].join('\n')
+        await runGeneration(prompt, instruction, instruction, undefined, true)
+      } else {
+        const extraNotes = briefForm.notes ? `${briefForm.notes}\n${fullContext}` : fullContext
+        const prompt = buildStructuredPrompt({ ...briefForm, notes: extraNotes }, selectedDirection)
+        await runGeneration(prompt, instruction, instruction, undefined, true)
+      }
+      return
+    }
+
+    // Handle image attachment
+    if (imageToSend) {
+      const label = instruction || text('以图生页面', 'Create page from image')
+      const prompt = [
+        instruction ? `Based on the provided image and this instruction: "${instruction}",` : 'Based on the provided image,',
+        generatedCode.trim() ? 'revise the existing landing page HTML to match the design shown in the image.' : 'create a complete landing page HTML that captures the style, layout, and visual design shown in the image.',
+        `Apply this visual direction: ${selectedDirection.name}. ${selectedDirection.prompt}`,
+        'Output a complete, fully static HTML document with embedded CSS.',
+        generatedCode.trim() ? `\nCurrent HTML to revise:\n${generatedCode.slice(0, 8000)}` : '',
+      ].filter(Boolean).join('\n')
+      await runGeneration(prompt, label, label, imageToSend, true)
+      return
+    }
+
+    // Check if this is a "create new page" request (don't modify existing pages)
+    if (isNewPageRequest(instruction) && generatedCode.trim()) {
+      await handleNewPageCreation(instruction)
+      return
+    }
+
+    // For first-time generation without existing code, check if we need clarification
+    if (!generatedCode.trim()) {
+      setIsAnalyzing(true)
+      try {
+        const result = await runClarificationCheck(instruction)
+        if (result.needsClarification) {
+          addMessage({ role: 'assistant', content: result.question })
+          setPendingGenContext(instruction)
+          setIsAnalyzing(false)
+          return
+        }
+      } catch { /* proceed on error */ }
+      setIsAnalyzing(false)
+
+      const extraNotes = briefForm.notes ? `${briefForm.notes}\n${instruction}` : instruction
+      const prompt = buildStructuredPrompt({ ...briefForm, notes: extraNotes }, selectedDirection)
+      await runGeneration(prompt, instruction, instruction, undefined, true)
+      return
+    }
+
+    // Modify existing page
+    const prompt = [
+      `Revise the landing page HTML based on this instruction: "${instruction}"`,
+      `Visual direction: ${selectedDirection.name}. ${selectedDirection.prompt}`,
+      'Return the complete improved HTML document. Keep it fully static, no React/Vue/Svelte, no external JS required.',
+      'Current HTML (revise this):',
+      generatedCode.slice(0, 12000),
+    ].join('\n')
+    await runGeneration(prompt, instruction, instruction, undefined, true)
+  }
+
+  if (chatCollapsed) {
+    return (
+      <aside className="shell-panel flex w-10 shrink-0 flex-col items-center overflow-hidden rounded-[28px] py-3 gap-4">
+        <button
+          className="btn-icon"
+          onClick={toggleChatCollapsed}
+          title={text('展开工作区', 'Expand workspace')}
+        >
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m9 18 6-6-6-6" />
+          </svg>
+        </button>
+        <span
+          className="mt-2 text-[10px] uppercase tracking-[0.16em] select-none"
+          style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', color: 'var(--text-disabled)' }}
+        >
+          {text('工作区', 'Workspace')}
+        </span>
+      </aside>
+    )
+  }
 
   return (
     <section className="shell-panel flex min-w-0 w-[340px] xl:w-[360px] 2xl:w-[370px] shrink-0 flex-col overflow-hidden rounded-[28px]">
-      <div className="border-b px-5 py-4" style={{ borderColor: 'var(--border-subtle)' }}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
+      {/* ── Header ─────────────────────────────────────────── */}
+      <div className="border-b px-5 py-3 shrink-0" style={{ borderColor: 'var(--border-subtle)' }}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <p className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-              {text('创作工作台', 'Artifact Studio')}
+              Nova
             </p>
-            <h2 className="mt-1 text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
-              {text('Brief、方向与微调', 'Brief, Direction, Tweaks')}
+            <h2 className="mt-0.5 truncate text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {currentProject?.name || text('还没有项目', 'No project yet')}
             </h2>
-            <p className="mt-1 text-sm" style={{ color: 'var(--text-secondary)' }}>
-              {text('把页面当成一个持续演化的成果，而不是一段段孤立提示词。', 'Treat the page as one evolving artifact instead of separate prompts and outputs.')}
-            </p>
+            {projectPages.length > 1 && (() => {
+              const currentPage = projectPages.find((p) => p.id === currentPageId)
+              return currentPage ? (
+                <p className="mt-0.5 flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  <svg className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2Z" />
+                  </svg>
+                  <span className="truncate">{currentPage.name}</span>
+                  <span style={{ color: 'var(--text-disabled)' }}>{currentPage.path}</span>
+                </p>
+              ) : null
+            })()}
           </div>
-          <span className={`badge ${isGenerating ? 'badge-success' : 'badge-accent'}`}>
-            {isGenerating ? text('生成中', 'Generating') : text('已就绪', 'Ready')}
-          </span>
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          <span className="badge badge-accent">{currentProject?.name || text('还没有项目', 'No project yet')}</span>
-          <span className="badge badge-accent">{text(`${versions.length} 个版本`, `${versions.length} versions`)}</span>
-          <span className="badge badge-accent">{text(`${variantCandidates.length} 个候选`, `${variantCandidates.length} candidates`)}</span>
-          <span className="badge badge-accent">{text(`${projects.length} 个项目`, `${projects.length} projects`)}</span>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className={`badge ${isGenerating ? 'badge-success' : 'badge-accent'}`}>
+              {isGenerating ? text('生成中', 'Generating') : text('已就绪', 'Ready')}
+            </span>
+            <button
+              className="btn-icon"
+              onClick={toggleChatCollapsed}
+              title={text('折叠工作区', 'Collapse workspace')}
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m15 18-6-6 6-6" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-5">
-        <div className="space-y-5">
-          <div className="panel-card rounded-[24px] p-4">
-            <div className="flex items-center justify-between gap-3">
+      {/* ── Scrollable content ─────────────────────────────── */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="p-4 space-y-4">
+
+          {/* Brief form (collapsible) */}
+          <div className="panel-card rounded-[24px] overflow-hidden">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between px-4 py-3 text-left"
+              onClick={() => setBriefOpen((prev) => !prev)}
+            >
               <div>
                 <p className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                  {text('问题表单', 'Question Form')}
+                  {text('页面 Brief', 'Page Brief')}
                 </p>
-                <h3 className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  {text('首次生成', 'First-pass generation')}
-                </h3>
+                <p className="mt-0.5 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {briefOpen ? text('收起', 'Collapse') : text('展开 Brief', 'Expand Brief')}
+                </p>
               </div>
-              <button
-                className="rounded-full px-3 py-1 text-xs"
-                style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}
-                onClick={() => setBriefForm(DEFAULT_BRIEF_FORM)}
-                type="button"
+              <svg
+                className="h-4 w-4 shrink-0 transition-transform duration-200"
+                style={{
+                  color: 'var(--text-muted)',
+                  transform: briefOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                }}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
               >
-                {text('重置', 'Reset')}
-              </button>
-            </div>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
 
-            <div className="mt-4 space-y-3">
-              <div>
-                <label className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                  {text('产品 / 品牌', 'Product / Brand')}
-                </label>
-                <input
-                  className="input h-11 px-3"
-                  value={briefForm.product}
-                  onChange={(event) => setBriefForm({ product: event.target.value })}
-                  placeholder={text('Nova Analytics、AI 发票工具、高端设计工作室...', 'Nova Analytics, AI invoicing app, premium design studio...')}
-                />
-              </div>
+            {briefOpen && (
+              <div className="px-4 pb-4 space-y-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                <div className="flex items-center justify-between pt-3">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {text('填写后点击生成', 'Fill in and generate')}
+                  </span>
+                  <button
+                    className="rounded-full px-3 py-1 text-xs"
+                    style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}
+                    onClick={() => setBriefForm(DEFAULT_BRIEF_FORM)}
+                    type="button"
+                  >
+                    {text('重置', 'Reset')}
+                  </button>
+                </div>
 
-              <div>
-                <label className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                  {text('目标受众', 'Audience')}
-                </label>
-                <input
-                  className="input h-11 px-3"
-                  value={briefForm.audience}
-                  onChange={(event) => setBriefForm({ audience: event.target.value })}
-                  placeholder={text('创业公司创始人、RevOps 团队、创作者、企业采购...', 'Startup founders, RevOps teams, creators, enterprise buyers...')}
-                />
-              </div>
+                <div>
+                  <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                    {text('产品 / 品牌', 'Product / Brand')}
+                  </label>
+                  <input
+                    className="input h-10 px-3"
+                    value={briefForm.product}
+                    onChange={(event) => setBriefForm({ product: event.target.value })}
+                    placeholder={text('Nova Analytics、AI 发票工具...', 'Nova Analytics, AI invoicing app...')}
+                  />
+                </div>
 
-              <div>
-                <label className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                  {text('目标', 'Goal')}
-                </label>
-                <input
-                  className="input h-11 px-3"
-                  value={briefForm.goal}
-                  onChange={(event) => setBriefForm({ goal: event.target.value })}
-                  placeholder={text('推动预约演示、解释产品、发布新功能...', 'Drive demo bookings, explain the product, launch a new feature...')}
-                />
-              </div>
+                <div>
+                  <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                    {text('目标受众', 'Audience')}
+                  </label>
+                  <input
+                    className="input h-10 px-3"
+                    value={briefForm.audience}
+                    onChange={(event) => setBriefForm({ audience: event.target.value })}
+                    placeholder={text('创业公司创始人、RevOps 团队...', 'Startup founders, RevOps teams...')}
+                  />
+                </div>
 
-              <div>
-                <label className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                  {text('必备区块', 'Required Sections')}
-                </label>
-                <input
-                  className="input h-11 px-3"
-                  value={briefForm.sections}
-                  onChange={(event) => setBriefForm({ sections: event.target.value })}
-                  placeholder={text('Hero、功能区、用户评价、定价、CTA...', 'Hero, feature grid, testimonials, pricing, CTA...')}
-                />
-              </div>
+                <div>
+                  <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                    {text('目标', 'Goal')}
+                  </label>
+                  <input
+                    className="input h-10 px-3"
+                    value={briefForm.goal}
+                    onChange={(event) => setBriefForm({ goal: event.target.value })}
+                    placeholder={text('推动预约演示、发布新功能...', 'Drive demo bookings, launch a feature...')}
+                  />
+                </div>
 
-              <div>
-                <label className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                  {text('补充说明', 'Notes')}
-                </label>
-                <textarea
-                  className="input min-h-[126px] px-3 py-3"
-                  value={briefForm.notes}
-                  onChange={(event) => setBriefForm({ notes: event.target.value })}
-                  placeholder={text('语气、参考站点、限制条件、文案风格、必须出现的证明信息...', 'Tone, references, constraints, desired copy style, must-have proof points...')}
-                />
+                <div>
+                  <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                    {text('必备区块', 'Required Sections')}
+                  </label>
+                  <input
+                    className="input h-10 px-3"
+                    value={briefForm.sections}
+                    onChange={(event) => setBriefForm({ sections: event.target.value })}
+                    placeholder={text('Hero、功能区、用户评价、定价...', 'Hero, features, testimonials, pricing...')}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                    {text('补充说明', 'Notes')}
+                  </label>
+                  <textarea
+                    className="input min-h-[80px] px-3 py-2"
+                    value={briefForm.notes}
+                    onChange={(event) => setBriefForm({ notes: event.target.value })}
+                    placeholder={text('语气、参考站点、限制条件...', 'Tone, references, constraints...')}
+                  />
+                </div>
+
+                {/* Direction picker */}
+                <div>
+                  <label className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                    {text('视觉方向', 'Visual Direction')}
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {directionPresets.map((preset) => {
+                      const isActive = preset.id === briefForm.directionId
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          className="rounded-[16px] border px-3 py-2.5 text-left transition-all"
+                          onClick={() => setBriefForm({ directionId: preset.id })}
+                          style={{
+                            background: isActive ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.52)',
+                            borderColor: isActive ? 'var(--border-accent)' : 'var(--border-subtle)',
+                            boxShadow: isActive ? 'var(--shadow-sm)' : 'none',
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-xs font-semibold leading-tight" style={{ color: 'var(--text-primary)' }}>
+                              {preset.name}
+                            </span>
+                            {isActive && (
+                              <svg className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--accent)' }} fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                            )}
+                          </div>
+                          <p className="mt-1 text-xs leading-snug" style={{ color: 'var(--text-muted)' }}>
+                            {preset.visualCue}
+                          </p>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <button className="btn btn-primary w-full mt-1" onClick={handleGenerate} disabled={isGenerating}>
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13 10V3L4 14h7v7l9-11h-7Z" />
+                  </svg>
+                  {isGenerating ? text('生成中...', 'Generating...') : text('根据 brief 生成', 'Generate from brief')}
+                </button>
               </div>
-            </div>
+            )}
           </div>
 
-          <div className="panel-card rounded-[24px] p-4">
-            <p className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-              {text('方向选择', 'Direction Picker')}
-            </p>
-            <h3 className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              {text('视觉方向预设', 'Visual direction presets')}
-            </h3>
-
-            <div className="mt-4 space-y-2">
-              {directionPresets.map((preset) => {
-                const isActive = preset.id === briefForm.directionId
-                return (
-                  <button
-                    key={preset.id}
-                    className="w-full rounded-[20px] border p-3 text-left transition-all"
-                    onClick={() => setBriefForm({ directionId: preset.id })}
+          {/* Chat messages */}
+          {messages.length > 0 && (
+            <div className="space-y-2">
+              {messages.map((msg, index) => (
+                <div
+                  key={index}
+                  className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  {msg.role === 'assistant' && (
+                    <div
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full mt-0.5"
+                      style={{ background: 'var(--gradient-brand)' }}
+                    >
+                      <svg className="h-3 w-3 fill-white" viewBox="0 0 24 24">
+                        <path d="M4 4h4v16H4V4Zm4 0h4l6 16h-4L9.5 8.5 8 20H4L8 4Z" />
+                      </svg>
+                    </div>
+                  )}
+                  <div
+                    className="max-w-[85%] rounded-[14px] px-3 py-2 text-sm leading-5"
                     style={{
-                      background: isActive ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.52)',
-                      borderColor: isActive ? 'var(--border-accent)' : 'var(--border-subtle)',
-                      boxShadow: isActive ? 'var(--shadow-sm)' : 'none',
+                      background: msg.role === 'user' ? 'var(--bg-accent-soft)' : 'rgba(255,255,255,0.6)',
+                      color: 'var(--text-primary)',
                     }}
                   >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                          {preset.name}
-                        </div>
-                        <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                          {preset.visualCue}
-                        </div>
-                      </div>
-                      {isActive && <span className="badge badge-success">{text('已选择', 'Selected')}</span>}
-                    </div>
-                    <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-secondary)' }}>
-                      {preset.summary}
-                    </p>
-                  </button>
-                )
-              })}
-            </div>
-
-            <div className="mt-4 rounded-[18px] px-3 py-3" style={{ background: 'rgba(255,255,255,0.46)' }}>
-              <div className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                {text('当前方向提示词', 'Active direction prompt')}
-              </div>
-              <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-secondary)' }}>
-                {selectedDirection.prompt}
-              </p>
-            </div>
-
-            <button className="btn btn-primary mt-4 w-full" onClick={handleGenerate} disabled={isGenerating}>
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13 10V3L4 14h7v7l9-11h-7Z" />
-              </svg>
-              {isGenerating ? text('生成中...', 'Generating...') : text('根据 brief 生成', 'Generate from brief')}
-            </button>
-          </div>
-
-          <div className="panel-card rounded-[24px] p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                  {text('快捷微调', 'Quick Tweaks')}
-                </p>
-                <h3 className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  {text('一键精修', 'One-click refinement')}
-                </h3>
-              </div>
-              {!hasContent && <span className="text-xs" style={{ color: 'var(--text-disabled)' }}>{text('先生成页面', 'Generate first')}</span>}
-            </div>
-
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              {quickTweaks.map((tweak) => (
-                <button
-                  key={tweak.id}
-                  className="rounded-[18px] border px-3 py-3 text-left text-sm transition-all disabled:cursor-not-allowed disabled:opacity-55"
-                  style={{ background: 'rgba(255,255,255,0.54)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
-                  onClick={() => handleTweak(tweak)}
-                  disabled={!hasContent || isGenerating}
-                >
-                  {tweak.label}
-                </button>
-              ))}
-            </div>
-
-            <p className="mt-3 text-sm leading-6" style={{ color: 'var(--text-secondary)' }}>
-              {hasContent
-                ? text('每个 tweak 都会保留当前成果上下文，让模型在已有页面上继续修改，而不是从零开始。', 'Each tweak keeps the current artifact context and asks the model to revise the existing page, not start from zero.')
-                : text('第一次生成完成后，这些动作会成为更快的精修入口。', 'Once the first page is generated, these actions become fast entry points for refinement.')}
-            </p>
-          </div>
-
-          <div className="panel-card rounded-[24px] p-4">
-            <p className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-              {text('生成时间线', 'Generation Timeline')}
-            </p>
-            <h3 className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              {text('明确的过程状态', 'Explicit process states')}
-            </h3>
-
-            <div className="mt-4 space-y-3">
-              {latestTimeline.map((step, index) => {
-                const isCompleted = step.status === 'completed'
-                const isActive = step.status === 'active'
-                const isError = step.status === 'error'
-
-                return (
-                  <div key={step.id} className="flex items-start gap-3">
-                    <div className="flex flex-col items-center">
-                      <div
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold"
-                        style={{
-                          background: isCompleted
-                            ? 'rgba(91, 155, 122, 0.16)'
-                            : isActive
-                              ? 'rgba(181, 135, 109, 0.16)'
-                              : isError
-                                ? 'rgba(203, 111, 111, 0.16)'
-                                : 'rgba(255,255,255,0.56)',
-                          color: isCompleted
-                            ? 'var(--success)'
-                            : isActive
-                              ? 'var(--accent-dark)'
-                              : isError
-                                ? 'var(--danger)'
-                                : 'var(--text-disabled)',
-                        }}
-                      >
-                        {isCompleted ? 'OK' : index + 1}
-                      </div>
-                      {index < latestTimeline.length - 1 && (
-                        <div className="mt-2 h-8 w-px" style={{ background: 'var(--border-default)' }} />
-                      )}
-                    </div>
-
-                    <div className="min-w-0 flex-1 rounded-[18px] px-3 py-2" style={{ background: 'rgba(255,255,255,0.42)' }}>
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                          {step.label}
-                        </div>
-                        <span className={`badge ${isCompleted ? 'badge-success' : 'badge-accent'}`}>
-                          {isCompleted ? text('完成', 'Done') : isActive ? text('进行中', 'Running') : isError ? text('出错', 'Error') : text('排队中', 'Queued')}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-sm leading-6" style={{ color: 'var(--text-secondary)' }}>
-                        {step.description}
-                      </p>
-                    </div>
+                    {msg.summary || msg.content}
                   </div>
-                )
-              })}
+                </div>
+              ))}
+              <div ref={messagesEndRef} />
             </div>
-          </div>
+          )}
 
-          <div className="panel-card rounded-[24px] p-4">
-            <p className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-              {text('提示词预览', 'Prompt Preview')}
-            </p>
-            <pre
-              className="mt-3 whitespace-pre-wrap rounded-[18px] px-3 py-3 text-xs leading-6"
-              style={{ background: 'rgba(255,255,255,0.5)', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}
-            >
-              {promptPreview}
-            </pre>
+          {/* Thinking animation */}
+          {(isAnalyzing || isGenerating) && (
+            <div className="flex gap-2 justify-start">
+              <div
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full mt-0.5"
+                style={{ background: 'var(--gradient-brand)' }}
+              >
+                <svg className="h-3 w-3 fill-white" viewBox="0 0 24 24">
+                  <path d="M4 4h4v16H4V4Zm4 0h4l6 16h-4L9.5 8.5 8 20H4L8 4Z" />
+                </svg>
+              </div>
+              <div
+                className="flex items-center gap-1.5 rounded-[14px] px-4 py-2.5"
+                style={{ background: 'rgba(255,255,255,0.6)' }}
+              >
+                <span className="thinking-dot" />
+                <span className="thinking-dot" style={{ animationDelay: '0.15s' }} />
+                <span className="thinking-dot" style={{ animationDelay: '0.3s' }} />
+                <span className="ml-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {isAnalyzing ? text('分析中…', 'Analyzing…') : text('生成中…', 'Generating…')}
+                </span>
+              </div>
+            </div>
+          )}
+
+          <div className="h-2" />
+        </div>
+      </div>
+
+      {/* ── Fixed footer ───────────────────────────────────── */}
+      <div className="shrink-0 px-3 pb-3 pt-2 space-y-2" style={{ background: 'var(--bg-surface)' }}>
+
+        {/* Quick tweak chips — horizontal scroll, no wrap */}
+        {hasContent && (
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5" style={{ scrollbarWidth: 'none' }}>
+            {quickTweaks.map((tweak) => (
+              <button
+                key={tweak.id}
+                type="button"
+                className="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-all disabled:opacity-40"
+                style={{
+                  background: 'rgba(255,255,255,0.72)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-secondary)',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                }}
+                onClick={() => handleTweak(tweak)}
+                disabled={isGenerating}
+              >
+                {tweak.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Unified input card */}
+        <div
+          className="rounded-[20px] border transition-shadow"
+          style={{
+            background: 'rgba(255,255,255,0.82)',
+            borderColor: 'var(--border-subtle)',
+            boxShadow: '0 2px 8px rgba(61,43,32,0.07)',
+          }}
+        >
+          {/* Image preview inside card */}
+          {attachedImage && (
+            <div className="flex items-center gap-2 border-b px-3 pt-2.5 pb-2" style={{ borderColor: 'var(--border-subtle)' }}>
+              <div className="relative shrink-0">
+                <img
+                  src={attachedImage.previewUrl}
+                  alt=""
+                  className="h-10 w-10 rounded-[8px] object-cover"
+                  style={{ border: '1px solid var(--border-subtle)' }}
+                />
+                <button
+                  type="button"
+                  className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full text-white text-[10px] leading-none"
+                  style={{ background: 'var(--text-secondary)' }}
+                  onClick={() => setAttachedImage(null)}
+                >
+                  ×
+                </button>
+              </div>
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                {attachedImage && !visionSupported
+                  ? text('当前 AI 不支持图像，建议切换到 Claude 或 GPT-4o', 'Provider does not support images — switch to Claude or GPT-4o')
+                  : text('图片已附加，发送后以图生页', 'Image attached — will generate from image')}
+              </span>
+            </div>
+          )}
+
+          {/* Textarea */}
+          <textarea
+            className="block w-full resize-none bg-transparent px-4 pt-3 text-sm outline-none"
+            style={{
+              minHeight: '52px',
+              maxHeight: '140px',
+              color: 'var(--text-primary)',
+              caretColor: 'var(--accent)',
+            }}
+            value={chatInput}
+            onChange={(e) => {
+              setChatInput(e.target.value)
+              e.target.style.height = 'auto'
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !isGenerating && !isAnalyzing) {
+                if (chatInput.trim() || attachedImage) {
+                  e.preventDefault()
+                  handleCustomChat()
+                }
+              }
+            }}
+            placeholder={
+              hasContent
+                ? text('告诉 Nova 要改什么，或上传图片参考…', 'Tell Nova what to change, or upload an image…')
+                : text('描述页面概念，或上传设计图…', 'Describe your page concept, or upload a design…')
+            }
+            disabled={isGenerating || isAnalyzing}
+            rows={1}
+          />
+
+          {/* Bottom toolbar inside card */}
+          <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
+            {/* Left: attach + hint */}
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                className="hidden"
+                onChange={handleImageSelect}
+              />
+              <button
+                type="button"
+                className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors"
+                style={{ color: attachedImage ? 'var(--accent-light)' : 'var(--text-disabled)' }}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isGenerating}
+                title={text('上传图片', 'Upload image')}
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M2.25 15.75l5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
+                </svg>
+              </button>
+              {isGenerating ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full" style={{ background: 'var(--accent)' }} />
+                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    {text('生成中…', 'Generating…')}
+                  </span>
+                </div>
+              ) : (
+                <span className="text-[11px] select-none" style={{ color: 'var(--text-disabled)' }}>
+                  {text('⌘ Enter 发送', '⌘ Enter to send')}
+                </span>
+              )}
+            </div>
+
+            {/* Right: send / stop */}
+            {isGenerating ? (
+              <button
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-full transition-all"
+                style={{ background: 'rgba(203,111,111,0.12)', color: '#c0504d' }}
+                onClick={() => useAppStore.getState().abortController?.abort()}
+                title={text('停止生成', 'Stop')}
+              >
+                <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+                  <rect x="6" y="6" width="12" height="12" rx="2" />
+                </svg>
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-full transition-all disabled:opacity-30"
+                style={{
+                  background: chatInput.trim() || attachedImage ? 'var(--gradient-brand)' : 'rgba(0,0,0,0.08)',
+                  color: chatInput.trim() || attachedImage ? 'white' : 'var(--text-disabled)',
+                  boxShadow: chatInput.trim() || attachedImage ? 'var(--shadow-sm)' : 'none',
+                }}
+                onClick={handleCustomChat}
+                disabled={!chatInput.trim() && !attachedImage}
+                title={text('发送 (Ctrl+Enter)', 'Send (Ctrl+Enter)')}
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M5 12h14M12 5l7 7-7 7" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
       </div>

@@ -18,6 +18,26 @@ declare global {
         headers: Record<string, string>
         body: string
       }>
+      openInBrowser: (html: string) => Promise<{ success: boolean; error?: string }>
+
+      // Settings
+      getSettings: () => Promise<{ dataDir: string | null }>
+      saveSettings: (settings: { dataDir: string | null }) => Promise<{ success: boolean }>
+      selectDataDir: () => Promise<string | null>
+
+      // Project file I/O
+      createProjectDir: () => Promise<string | null>
+      writeProjectFile: (payload: {
+        projectDirName: string
+        fileName: string
+        content: string
+      }) => Promise<{ success: boolean; error?: string }>
+      readProjectFile: (payload: {
+        projectDirName: string
+        fileName: string
+      }) => Promise<string | null>
+      listProjectDirs: () => Promise<Array<{ dirName: string; meta: Record<string, unknown> }>>
+      deleteProjectDir: (payload: { projectDirName: string }) => Promise<{ success: boolean }>
     }
   }
 }

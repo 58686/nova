@@ -71,7 +71,8 @@ export default function VersionHistory() {
           return (
             <div
               key={version.id}
-              className="group rounded-xl p-3 transition-all duration-200"
+              className="group rounded-xl p-3 transition-all duration-200 cursor-pointer"
+              onClick={() => restoreVersion(version.id)}
               style={{
                 background: isActive ? 'rgba(255,255,255,0.84)' : 'var(--bg-surface)',
                 border: `1px solid ${isActive ? 'var(--border-accent)' : 'var(--border-subtle)'}`,
@@ -100,7 +101,7 @@ export default function VersionHistory() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                   <button
                     onClick={() => restoreVersion(version.id)}
                     className="rounded-md px-2 py-1 text-[10px] font-medium transition-colors"
