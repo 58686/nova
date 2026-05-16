@@ -45,6 +45,14 @@
       "dist-electron",
       "dist"
     ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Nova"
+    },
     "win": {
       "target": [
         "nsis",
