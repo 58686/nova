@@ -40,8 +40,16 @@ jobs:
       - name: Build Electron main/preload
         run: npm run electron:compile
 
-      - name: Package and publish to GitHub Release
-        run: npx electron-builder --publish=always
+      - name: Package desktop app
+        run: npx electron-builder --publish=never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/**/*.exe
+            release/**/*.dmg
+            release/**/*.yml
+            release/**/*.blockmap
