@@ -225,7 +225,8 @@ export default function Header({ activePanel = 'preview', onToggleVersions, onTo
           <button
             className="hidden items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold sm:flex"
             style={{ background: 'rgba(200,121,65,0.15)', color: 'var(--text-accent)' }}
-            onClick={check}
+            onClick={install}
+            title={text('点击前往下载页面', 'Click to open download page')}
           >
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
             {text(`发现新版本 v${update.version}`, `v${update.version} available`)}

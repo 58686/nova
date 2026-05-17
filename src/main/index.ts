@@ -1,5 +1,4 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { autoUpdater } from 'electron-updater'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -292,42 +291,46 @@ ipcMain.handle('delete-project-dir', (event, payload: { projectDirName: string }
   }
 })
 
-// ── Auto updater ─────────────────────────────────────────────────────────────
+// ── Auto updater (GitHub API, no native deps) ─────────────────────────────────
 
-function setupAutoUpdater() {
-  if (!app.isPackaged) return  // skip in dev mode
+const RELEASES_API = 'https://api.github.com/repos/58686/nova/releases/latest'
+const RELEASES_PAGE = 'https://github.com/58686/nova/releases/latest'
 
-  autoUpdater.autoDownload = true
-  autoUpdater.autoInstallOnAppQuit = true
-
-  autoUpdater.on('update-available', (info) => {
-    mainWindow?.webContents.send('update-available', { version: info.version, releaseNotes: info.releaseNotes })
-  })
-
-  autoUpdater.on('download-progress', (progress) => {
-    mainWindow?.webContents.send('update-progress', { percent: Math.round(progress.percent), bytesPerSecond: progress.bytesPerSecond })
-  })
-
-  autoUpdater.on('update-downloaded', (info) => {
-    mainWindow?.webContents.send('update-downloaded', { version: info.version })
-  })
-
-  autoUpdater.on('error', (err) => {
-    mainWindow?.webContents.send('update-error', { message: err.message })
-  })
-
-  // Check on startup, then every 4 hours
-  autoUpdater.checkForUpdates().catch(() => {})
-  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000)
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number)
+  const pb = b.split('.').map(Number)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0)
+    if (diff !== 0) return diff
+  }
+  return 0
 }
 
-ipcMain.handle('check-for-updates', () => {
+async function checkForUpdatesGitHub() {
   if (!app.isPackaged) return
-  autoUpdater.checkForUpdates().catch(() => {})
-})
+  try {
+    const res = await fetch(RELEASES_API, { headers: { 'User-Agent': 'Nova-App' } })
+    if (!res.ok) return
+    const release = await res.json() as { tag_name: string; body?: string }
+    const latest = release.tag_name.replace(/^v/, '')
+    if (compareVersions(latest, app.getVersion()) > 0) {
+      mainWindow?.webContents.send('update-available', { version: latest, releaseNotes: release.body ?? '' })
+    }
+  } catch {
+    // network unavailable — silently ignore
+  }
+}
+
+function setupAutoUpdater() {
+  if (!app.isPackaged) return
+  checkForUpdatesGitHub()
+  setInterval(checkForUpdatesGitHub, 4 * 60 * 60 * 1000)
+}
+
+ipcMain.handle('check-for-updates', () => checkForUpdatesGitHub())
 
 ipcMain.handle('install-update', () => {
-  autoUpdater.quitAndInstall(false, true)
+  shell.openExternal(RELEASES_PAGE)
 })
 
 ipcMain.handle('get-app-version', () => app.getVersion())
