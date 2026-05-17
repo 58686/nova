@@ -12,7 +12,7 @@ export default defineConfig({
       formats: ['cjs'],
     },
     rollupOptions: {
-      external: ['electron', 'fs', 'path', 'os', 'url', 'crypto', 'child_process'],
+      external: ['electron', 'electron-updater', 'fs', 'path', 'os', 'url', 'crypto', 'child_process'],
     },
     minify: false,
   },
