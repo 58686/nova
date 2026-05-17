@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -291,7 +292,50 @@ ipcMain.handle('delete-project-dir', (event, payload: { projectDirName: string }
   }
 })
 
-app.whenReady().then(createWindow)
+// ── Auto updater ─────────────────────────────────────────────────────────────
+
+function setupAutoUpdater() {
+  if (!app.isPackaged) return  // skip in dev mode
+
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+
+  autoUpdater.on('update-available', (info) => {
+    mainWindow?.webContents.send('update-available', { version: info.version, releaseNotes: info.releaseNotes })
+  })
+
+  autoUpdater.on('download-progress', (progress) => {
+    mainWindow?.webContents.send('update-progress', { percent: Math.round(progress.percent), bytesPerSecond: progress.bytesPerSecond })
+  })
+
+  autoUpdater.on('update-downloaded', (info) => {
+    mainWindow?.webContents.send('update-downloaded', { version: info.version })
+  })
+
+  autoUpdater.on('error', (err) => {
+    mainWindow?.webContents.send('update-error', { message: err.message })
+  })
+
+  // Check on startup, then every 4 hours
+  autoUpdater.checkForUpdates().catch(() => {})
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000)
+}
+
+ipcMain.handle('check-for-updates', () => {
+  if (!app.isPackaged) return
+  autoUpdater.checkForUpdates().catch(() => {})
+})
+
+ipcMain.handle('install-update', () => {
+  autoUpdater.quitAndInstall(false, true)
+})
+
+ipcMain.handle('get-app-version', () => app.getVersion())
+
+app.whenReady().then(() => {
+  createWindow()
+  setupAutoUpdater()
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

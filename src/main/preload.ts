@@ -36,6 +36,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectDataDir: () =>
     ipcRenderer.invoke('select-data-dir'),
 
+  // Auto updater
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+  onUpdateAvailable: (cb: (info: { version: string }) => void) => {
+    ipcRenderer.on('update-available', (_, info) => cb(info))
+  },
+  onUpdateProgress: (cb: (info: { percent: number }) => void) => {
+    ipcRenderer.on('update-progress', (_, info) => cb(info))
+  },
+  onUpdateDownloaded: (cb: (info: { version: string }) => void) => {
+    ipcRenderer.on('update-downloaded', (_, info) => cb(info))
+  },
+
   // Project file I/O
   createProjectDir: () =>
     ipcRenderer.invoke('create-project-dir'),

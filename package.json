@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "electron-updater": "^6.8.3",
     "nanoid": "^5.0.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -60,11 +61,15 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
@@ -77,6 +82,11 @@
       "target": [
         "AppImage"
       ]
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "58686",
+      "repo": "nova"
     }
   }
 }

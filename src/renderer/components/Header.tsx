@@ -3,6 +3,33 @@ import { useLocale } from '../hooks/useLocale'
 import { useAIConfigStore } from '../stores/aiConfigStore'
 import { useAppStore } from '../stores/appStore'
 
+type UpdateState =
+  | { status: 'idle' }
+  | { status: 'available'; version: string }
+  | { status: 'downloading'; percent: number }
+  | { status: 'ready'; version: string }
+
+function useUpdater() {
+  const [update, setUpdate] = useState<UpdateState>({ status: 'idle' })
+  const [appVersion, setAppVersion] = useState('')
+
+  useEffect(() => {
+    const api = window.electronAPI
+    if (!api) return
+    api.getAppVersion().then(setAppVersion).catch(() => {})
+    api.onUpdateAvailable?.((info) => setUpdate({ status: 'available', version: info.version }))
+    api.onUpdateProgress?.((info) => setUpdate({ status: 'downloading', percent: info.percent }))
+    api.onUpdateDownloaded?.((info) => setUpdate({ status: 'ready', version: info.version }))
+  }, [])
+
+  return {
+    update,
+    appVersion,
+    install: () => window.electronAPI?.installUpdate(),
+    check: () => window.electronAPI?.checkForUpdates(),
+  }
+}
+
 interface HeaderProps {
   activePanel?: 'preview' | 'versions' | 'canvas'
   onToggleVersions?: () => void
@@ -30,6 +57,7 @@ export default function Header({ activePanel = 'preview', onToggleVersions, onTo
   const activeConfig = getActiveConfig()
   const activePreset = presets.find((preset) => preset.id === activePresetId)
   const hasGeneratedCode = generatedCode.trim().length > 0
+  const { update, appVersion, install, check } = useUpdater()
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -180,6 +208,55 @@ export default function Header({ activePanel = 'preview', onToggleVersions, onTo
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2Z" />
           </svg>
         </button>
+
+        {/* Version + update badge */}
+        {update.status === 'idle' && appVersion && (
+          <button
+            className="hidden rounded-full px-2.5 py-1 text-[11px] font-medium sm:block"
+            style={{ background: 'rgba(255,255,255,0.35)', color: 'var(--text-muted)' }}
+            onClick={check}
+            title={text('检查更新', 'Check for updates')}
+          >
+            v{appVersion}
+          </button>
+        )}
+
+        {update.status === 'available' && (
+          <button
+            className="hidden items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold sm:flex"
+            style={{ background: 'rgba(200,121,65,0.15)', color: 'var(--text-accent)' }}
+            onClick={check}
+          >
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+            {text(`发现新版本 v${update.version}`, `v${update.version} available`)}
+          </button>
+        )}
+
+        {update.status === 'downloading' && (
+          <div
+            className="hidden items-center gap-2 rounded-full px-3 py-1 text-[11px] sm:flex"
+            style={{ background: 'rgba(255,255,255,0.35)', color: 'var(--text-secondary)' }}
+          >
+            <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+            </svg>
+            {text(`下载中 ${update.percent}%`, `Downloading ${update.percent}%`)}
+          </div>
+        )}
+
+        {update.status === 'ready' && (
+          <button
+            className="hidden animate-pulse items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold sm:flex"
+            style={{ background: 'var(--gradient-brand)', color: '#fff' }}
+            onClick={install}
+          >
+            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            {text(`安装 v${update.version} 并重启`, `Install v${update.version} & restart`)}
+          </button>
+        )}
 
         <button className="btn btn-primary relative" onClick={onOpenAIConfig}>
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

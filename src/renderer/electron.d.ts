@@ -24,6 +24,14 @@ declare global {
       ) => Promise<{ ok: boolean; status: number; body?: string }>
       openInBrowser: (html: string) => Promise<{ success: boolean; error?: string }>
 
+      // Auto updater
+      getAppVersion: () => Promise<string>
+      checkForUpdates: () => Promise<void>
+      installUpdate: () => Promise<void>
+      onUpdateAvailable: (cb: (info: { version: string }) => void) => void
+      onUpdateProgress: (cb: (info: { percent: number }) => void) => void
+      onUpdateDownloaded: (cb: (info: { version: string }) => void) => void
+
       // Settings
       getSettings: () => Promise<{ dataDir: string | null }>
       saveSettings: (settings: { dataDir: string | null }) => Promise<{ success: boolean }>
