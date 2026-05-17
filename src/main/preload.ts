@@ -14,6 +14,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     body?: string
     timeout?: number
   }) => ipcRenderer.invoke('proxy-request', payload),
+  proxyStream: (
+    payload: { id: string; url: string; method?: string; headers?: Record<string, string>; body?: string; timeout?: number },
+    onChunk: (chunk: string) => void,
+  ) => {
+    const channel = `proxy-stream-chunk:${payload.id}`
+    const listener = (_: Electron.IpcRendererEvent, chunk: string) => onChunk(chunk)
+    ipcRenderer.on(channel, listener)
+    return ipcRenderer.invoke('proxy-stream', payload).finally(() => {
+      ipcRenderer.removeListener(channel, listener)
+    })
+  },
   openInBrowser: (html: string) =>
     ipcRenderer.invoke('open-in-browser', html),
 

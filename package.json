@@ -50,14 +50,22 @@
       "allowToChangeInstallationDirectory": true,
       "allowElevation": false,
       "perMachine": false,
+      "installerRequestedExecutionLevel": "asInvoker",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Nova"
     },
     "win": {
+      "requestedExecutionLevel": "asInvoker",
       "target": [
-        "nsis",
-        "portable"
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
       ]
     },
     "mac": {

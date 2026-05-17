@@ -80,11 +80,33 @@ export class RuntimeAIService {
   async *stream(prompt: string, history: Message[] = [], signal?: AbortSignal, imageData?: ImageData): AsyncGenerator<string, void, unknown> {
     const messages: Message[] = [...history, { role: 'user', content: prompt }]
 
-    // Electron IPC proxy doesn't support streaming — fall back to full response
-    if (typeof window !== 'undefined' && (window as any).electronAPI?.proxyRequest) {
-      const result = await this.generate(prompt, history, false, imageData)
-      yield result
-      return
+    // When running in Electron, use IPC streaming proxy so chunks arrive progressively
+    if (typeof window !== 'undefined' && window.electronAPI?.proxyStream) {
+      switch (this.config.provider) {
+        case 'anthropic':
+          yield* this.streamAnthropicViaIPC(messages, signal, imageData)
+          return
+        case 'openrouter':
+          yield* this.streamOpenAIViaIPC(messages, signal, `${this.normalizeBaseUrl(this.config.baseUrl)}/v1/chat/completions`, {
+            Authorization: `Bearer ${this.config.apiKey}`,
+            'HTTP-Referer': 'https://devui.app',
+            'X-Title': 'Nova',
+          }, imageData)
+          return
+        case 'openai':
+        case 'deepseek':
+        case 'qwen':
+        case 'moonshot':
+        case 'minimax':
+        case 'baichuan':
+        case 'nvidia':
+        case 'custom':
+          yield* this.streamOpenAIViaIPC(messages, signal, this.buildChatUrl(), this.getAuthHeaders(this.config.provider), imageData)
+          return
+        default:
+          yield await this.generate(prompt, history)
+          return
+      }
     }
 
     switch (this.config.provider) {
@@ -110,6 +132,97 @@ export class RuntimeAIService {
         break
       default:
         yield await this.generate(prompt, history)
+    }
+  }
+
+  // ── IPC streaming helpers (Electron packaged app) ─────────────────────────
+
+  private ipcStreamRaw(url: string, headers: Record<string, string>, body: object, signal?: AbortSignal): AsyncGenerator<string, void, unknown> {
+    const api = window.electronAPI!
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+
+    const queue: string[] = []
+    let done = false
+    let wakeup: (() => void) | null = null
+
+    const onChunk = (chunk: string) => { queue.push(chunk); wakeup?.(); wakeup = null }
+
+    const streamPromise = api.proxyStream(
+      { id, url, method: 'POST', headers, body: JSON.stringify(body), timeout: 300000 },
+      onChunk,
+    ).then((res) => {
+      if (!res.ok) throw new Error(`API error (${res.status}): ${(res.body ?? '').slice(0, 200)}`)
+    }).finally(() => { done = true; wakeup?.(); wakeup = null })
+
+    signal?.addEventListener('abort', () => { done = true; wakeup?.(); wakeup = null })
+
+    return (async function* () {
+      while (true) {
+        if (queue.length > 0) { yield queue.shift()!; continue }
+        if (done) break
+        await new Promise<void>((r) => { wakeup = r })
+      }
+      await streamPromise
+    })()
+  }
+
+  private async *streamAnthropicViaIPC(messages: Message[], signal?: AbortSignal, imageData?: ImageData): AsyncGenerator<string, void, unknown> {
+    const url = `${this.normalizeBaseUrl(this.config.baseUrl)}/v1/messages`
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-api-key': this.config.apiKey,
+      'anthropic-version': '2023-06-01',
+      ...this.config.customHeaders,
+    }
+    const body = {
+      model: this.config.model,
+      max_tokens: this.config.maxTokens,
+      temperature: this.config.temperature,
+      stream: true,
+      system: this.config.systemPrompt || DEFAULT_SYSTEM_PROMPT,
+      messages: this.buildAnthropicMessages(messages, imageData),
+    }
+    let buf = ''
+    for await (const raw of this.ipcStreamRaw(url, headers, body, signal)) {
+      buf += raw
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const data = line.slice(6).trim()
+        if (!data || data === '[DONE]') continue
+        try {
+          const parsed = JSON.parse(data)
+          if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') yield parsed.delta.text as string
+        } catch { /* skip */ }
+      }
+    }
+  }
+
+  private async *streamOpenAIViaIPC(messages: Message[], signal: AbortSignal | undefined, url: string, extraHeaders: Record<string, string>, imageData?: ImageData): AsyncGenerator<string, void, unknown> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', ...extraHeaders, ...this.config.customHeaders }
+    const body = {
+      model: this.config.model,
+      max_tokens: this.config.maxTokens,
+      temperature: this.config.temperature,
+      stream: true,
+      messages: this.buildOpenAIMessages(messages, imageData),
+    }
+    let buf = ''
+    for await (const raw of this.ipcStreamRaw(url, headers, body, signal)) {
+      buf += raw
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const data = line.slice(6).trim()
+        if (!data || data === '[DONE]') continue
+        try {
+          const parsed = JSON.parse(data)
+          const text = parsed.choices?.[0]?.delta?.content
+          if (text) yield text as string
+        } catch { /* skip */ }
+      }
     }
   }
 
@@ -438,7 +551,7 @@ export class RuntimeAIService {
         method: options.method,
         headers: options.headers as Record<string, string> | undefined,
         body: typeof options.body === 'string' ? options.body : undefined,
-        timeout: this.config.timeout || 60000,
+        timeout: this.config.timeout || 300000,
       })
 
       return new Response(result.body, {

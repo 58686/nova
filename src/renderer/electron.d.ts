@@ -18,6 +18,10 @@ declare global {
         headers: Record<string, string>
         body: string
       }>
+      proxyStream: (
+        payload: { id: string; url: string; method?: string; headers?: Record<string, string>; body?: string; timeout?: number },
+        onChunk: (chunk: string) => void,
+      ) => Promise<{ ok: boolean; status: number; body?: string }>
       openInBrowser: (html: string) => Promise<{ success: boolean; error?: string }>
 
       // Settings

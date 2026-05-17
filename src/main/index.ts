@@ -85,6 +85,58 @@ ipcMain.handle('export-html', async (event, html: string, defaultName?: string) 
   return { success: false }
 })
 
+// Streaming proxy — sends chunks back to renderer via sender events while request is in flight
+ipcMain.handle(
+  'proxy-stream',
+  async (
+    event,
+    payload: {
+      id: string
+      url: string
+      method?: string
+      headers?: Record<string, string>
+      body?: string
+      timeout?: number
+    },
+  ) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), payload.timeout || 300000)
+    try {
+      const response = await fetch(payload.url, {
+        method: payload.method || 'POST',
+        headers: payload.headers,
+        body: payload.body,
+        signal: controller.signal,
+      })
+      if (!response.ok || !response.body) {
+        const body = await response.text()
+        return { ok: false, status: response.status, body }
+      }
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (event.sender.isDestroyed()) break
+          event.sender.send(`proxy-stream-chunk:${payload.id}`, decoder.decode(value, { stream: true }))
+        }
+      } finally {
+        reader.releaseLock()
+      }
+      return { ok: true, status: response.status }
+    } catch (error: any) {
+      return {
+        ok: false,
+        status: error?.name === 'AbortError' ? 504 : 500,
+        body: JSON.stringify({ error: { message: error?.name === 'AbortError' ? 'Request timed out' : error?.message } }),
+      }
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  },
+)
+
 ipcMain.handle(
   'proxy-request',
   async (
@@ -98,7 +150,7 @@ ipcMain.handle(
     },
   ) => {
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), payload.timeout || 60000)
+    const timeoutId = setTimeout(() => controller.abort(), payload.timeout || 300000)
 
     try {
       const response = await fetch(payload.url, {
