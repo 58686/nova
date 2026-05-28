@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import AIConfigManager from './components/AIConfigManager'
+import ErrorBoundary from './components/ErrorBoundary'
 import APITester from './components/APITester'
 import CanvasView from './components/CanvasView'
 import ChatPanel from './components/ChatPanel'
@@ -75,14 +76,14 @@ function App() {
           </div>
 
           <div className={`flex min-w-0 flex-1 ${showFocusedPreview ? 'gap-0' : 'gap-3'}`}>
-            {!showFocusedPreview && <ChatPanel />}
+            {!showFocusedPreview && <ErrorBoundary label="Chat"><ChatPanel /></ErrorBoundary>}
 
             {showFocusedPreview ? (
-              <PreviewPanel focused />
+              <ErrorBoundary label="Preview"><PreviewPanel focused /></ErrorBoundary>
             ) : rightPanel === 'canvas' ? (
               <CanvasView onSwitchToPreview={() => setRightPanel('preview')} />
             ) : rightPanel === 'preview' ? (
-              <PreviewPanel />
+              <ErrorBoundary label="Preview"><PreviewPanel /></ErrorBoundary>
             ) : (
               <div className="flex min-w-0 flex-1 gap-3">
                 <section className="shell-panel flex w-[280px] xl:w-[300px] shrink-0 flex-col overflow-hidden rounded-[26px]">
@@ -98,7 +99,7 @@ function App() {
                     <VersionHistory />
                   </div>
                 </section>
-                <PreviewPanel />
+                <ErrorBoundary label="Preview"><PreviewPanel /></ErrorBoundary>
               </div>
             )}
           </div>

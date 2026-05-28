@@ -197,6 +197,45 @@ ipcMain.handle('open-in-browser', async (event, html: string) => {
   }
 })
 
+// ── PDF export ────────────────────────────────────────────────────────────────
+
+ipcMain.handle('export-pdf', async (event, html: string, defaultName?: string) => {
+  const result = await dialog.showSaveDialog(mainWindow!, {
+    defaultPath: defaultName || 'export.pdf',
+    filters: [
+      { name: 'PDF Files', extensions: ['pdf'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  })
+
+  if (result.canceled || !result.filePath) return { success: false }
+
+  // Write HTML to a temp file, load it in a hidden window, print to PDF
+  const tmpFile = path.join(os.tmpdir(), `nova-pdf-${Date.now()}.html`)
+  fs.writeFileSync(tmpFile, html, 'utf-8')
+
+  const pdfWindow = new BrowserWindow({
+    show: false,
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
+  })
+
+  try {
+    await pdfWindow.loadFile(tmpFile)
+    const data = await pdfWindow.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      landscape: false,
+    })
+    fs.writeFileSync(result.filePath, data)
+    return { success: true, path: result.filePath }
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'PDF export failed' }
+  } finally {
+    pdfWindow.destroy()
+    try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
+  }
+})
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 ipcMain.handle('get-settings', () => {

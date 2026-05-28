@@ -5,6 +5,7 @@ import { ImageData, RuntimeAIService, supportsVision } from '../services/runtime
 import {
   buildPromptForType,
   buildTweakPromptForType,
+  DESIGN_SYSTEMS,
   DirectionPreset,
   OUTPUT_LANGUAGES,
   PAGE_TEMPLATES,
@@ -113,6 +114,10 @@ function isStandalonePage(path: string, name: string): boolean {
   return STANDALONE_PAGE_PATTERNS.some((re) => re.test(text))
 }
 
+function sanitizePromptInput(s: string): string {
+  return s.replace(/["`\\]/g, ' ').replace(/\n+/g, ' ').trim().slice(0, 120)
+}
+
 function buildPageContext(pages: Page[], currentPageId: string | null): string {
   if (pages.length <= 1) return ''
   const current = pages.find((p) => p.id === currentPageId)
@@ -193,6 +198,9 @@ function getCanvasCount(html: string): number {
 }
 
 function looksLikeBlankShell(html: string): boolean {
+  // Slide presentations use display:none + JS navigation by design — never treat as blank
+  if (/class=["'][^"']*\bslide\b[^"']*["']/.test(html) && /<section\b/i.test(html)) return false
+
   const normalized = html.toLowerCase()
   const visibleTextLength = getVisibleTextLength(html)
   const scriptCount = getScriptCount(html)
@@ -202,9 +210,11 @@ function looksLikeBlankShell(html: string): boolean {
   const hasRootShell = /<div[^>]+id=["'](root|app|__next)["'][^>]*>\s*<\/div>/i.test(html)
   const hasFrameworkScript =
     /(reactdom|createroot|hydrateroot|vue\.createapp|new vue|svelte|type=["']module["'])/.test(normalized)
-  const hasChartingLibrary =
-    /(echarts|chart\.js|chartjs|highcharts|apexcharts|plotly|d3(?:\.js)?|three(?:\.js)?|pixi(?:\.js)?|vega|framer-motion|gsap)/.test(normalized)
   const hasExternalScript = /<script[^>]+src=/i.test(html)
+  // Only flag charting libraries when loaded via external script src (not inline mentions or CSS)
+  const hasChartingLibrary =
+    hasExternalScript &&
+    /<script[^>]+src=["'][^"']*(?:echarts|chart\.js|chartjs|highcharts|apexcharts|plotly|d3(?:\.min)?\.js|three(?:\.min)?\.js|pixi|vega|gsap)[^"']*["']/i.test(html)
   const hasDelayedReveal =
     /(opacity\s*:\s*0|visibility\s*:\s*hidden|display\s*:\s*none|transform\s*:\s*translate|animation\s*:)/.test(normalized)
   const isCanvasOnly = canvasCount > 0 && visibleTextLength < 120
@@ -272,6 +282,8 @@ export default function ChatPanel() {
     generatedCode,
     isGenerating,
     messages,
+    activeGenerationLabel,
+    generationTimeline,
     setAbortController,
     setActiveGenerationLabel,
     setBriefForm,
@@ -311,6 +323,7 @@ export default function ChatPanel() {
   const hasContent = generatedCode.trim().length > 0
 
   const [briefOpen, setBriefOpen] = useState(!hasContent)
+  const [briefTab, setBriefTab] = useState<'content' | 'style'>('content')
   const [showTemplates, setShowTemplates] = useState(false)
   const [templateFilter, setTemplateFilter] = useState<string>('all')
 
@@ -336,7 +349,18 @@ export default function ChatPanel() {
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    // Reject oversized files (> 5 MB) and clear any stale attachment
+    if (file.size > 5 * 1024 * 1024) {
+      setAttachedImage(null)
+      setError(text('图片不能超过 5 MB，请重新选择。', 'Image must be under 5 MB. Please choose another file.'))
+      e.target.value = ''
+      return
+    }
     const reader = new FileReader()
+    reader.onerror = () => {
+      setAttachedImage(null)
+      setError(text('图片读取失败，请重试。', 'Failed to read image. Please try again.'))
+    }
     reader.onload = () => {
       const dataUrl = reader.result as string
       const commaIdx = dataUrl.indexOf(',')
@@ -350,7 +374,7 @@ export default function ChatPanel() {
 
   const visionSupported = supportsVision(runtimeConfig.provider)
 
-  const runGeneration = async (prompt: string, label: string, description: string, imageData?: ImageData, skipUserMessage = false) => {
+  const runGeneration = async (prompt: string, label: string, description: string, imageData?: ImageData, skipUserMessage = false, pageContextHint = '') => {
     if (!runtimeConfig?.apiKey) {
       setError(text('请先配置 AI 提供商再开始生成。', 'Please configure an AI provider before generating.'))
       return
@@ -377,6 +401,8 @@ export default function ChatPanel() {
     // Show user message immediately so the chat feels responsive
     if (!skipUserMessage) addMessage({ role: 'user', content: label })
 
+    setPendingGenContext(null)
+    setClarificationDepth(0)
     setError(null)
     setSuccess(null)
     setGenerating(true)
@@ -424,7 +450,11 @@ export default function ChatPanel() {
       let html = service.extractHTML(rawBuffer)
       if (looksLikeBlankShell(html)) {
         let recoveryBuffer = ''
-        for await (const chunk of service.stream(buildStaticRecoveryPrompt(prompt, html), messages.slice(-2), controller.signal)) {
+        const recoveryPrompt = buildStaticRecoveryPrompt(
+          pageContextHint ? `${pageContextHint}\n\n${prompt}` : prompt,
+          html,
+        )
+        for await (const chunk of service.stream(recoveryPrompt, messages.slice(-2), controller.signal)) {
           if (controller.signal.aborted) break
           recoveryBuffer += chunk
         }
@@ -488,12 +518,12 @@ export default function ChatPanel() {
           if (!newPage) continue
 
           const linkedPrompt = [
-            `Create the "${newPage.name}" page (path: ${newPage.path}) for this multi-page product.`,
-            entry.linkText ? `The navigation link that leads here is labeled: "${entry.linkText}". The page content should match this label's purpose and scope.` : '',
-            `This page is navigated to from the "${currentPageName}" page.`,
-            briefForm.product ? `Product/brand: ${briefForm.product}.` : '',
-            briefForm.audience ? `Target audience: ${briefForm.audience}.` : '',
-            briefForm.goal ? `Overall product goal: ${briefForm.goal}.` : '',
+            `Create the "${sanitizePromptInput(newPage.name)}" page (path: ${newPage.path}) for this multi-page product.`,
+            entry.linkText ? `The navigation link that leads here is labeled: "${sanitizePromptInput(entry.linkText)}". The page content should match this label's purpose and scope.` : '',
+            `This page is navigated to from the "${sanitizePromptInput(currentPageName)}" page.`,
+            briefForm.product ? `Product/brand: ${sanitizePromptInput(briefForm.product)}.` : '',
+            briefForm.audience ? `Target audience: ${sanitizePromptInput(briefForm.audience)}.` : '',
+            briefForm.goal ? `Overall product goal: ${sanitizePromptInput(briefForm.goal)}.` : '',
             '',
             '⚠️ CRITICAL — VISUAL CONSISTENCY (non-negotiable):',
             'This page MUST be visually identical in design system to the reference page below.',
@@ -550,7 +580,7 @@ export default function ChatPanel() {
     const pageContext = buildPageContext(projectPages, currentPageId)
     const prompt = buildPromptForType(briefForm, selectedDirection, pageContext)
     const description = `${selectedDirection.name} / ${briefForm.goal || text('新概念', 'New concept')}`
-    await runGeneration(prompt, text(`生成 ${selectedDirection.name}`, `Generate ${selectedDirection.name}`), description)
+    await runGeneration(prompt, text(`生成 ${selectedDirection.name}`, `Generate ${selectedDirection.name}`), description, undefined, false, pageContext)
   }
 
   const handleTweak = async (tweak: QuickTweak) => {
@@ -580,12 +610,13 @@ export default function ChatPanel() {
     const pageContext = buildPageContext(projectPages, currentPageId)
     const prompt = buildPromptForType(newBrief, direction, pageContext)
     const label = isZh ? tpl.name : tpl.nameEn
-    await runGeneration(prompt, label, label)
+    await runGeneration(prompt, label, label, undefined, false, pageContext)
   }
 
   const [chatInput, setChatInput] = useState('')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [pendingGenContext, setPendingGenContext] = useState<string | null>(null)
+  const [clarificationDepth, setClarificationDepth] = useState(0)
 
   // Lightweight AI call to check if we need clarification
   const runClarificationCheck = async (instruction: string): Promise<{ needsClarification: boolean; question: string }> => {
@@ -706,12 +737,15 @@ export default function ChatPanel() {
     if (!generatedCode.trim()) {
       setIsAnalyzing(true)
       try {
-        const result = await runClarificationCheck(instruction)
-        if (result.needsClarification) {
-          addMessage({ role: 'assistant', content: result.question })
-          setPendingGenContext(instruction)
-          setIsAnalyzing(false)
-          return
+        if (clarificationDepth < 1) {
+          const result = await runClarificationCheck(instruction)
+          if (result.needsClarification) {
+            addMessage({ role: 'assistant', content: result.question })
+            setPendingGenContext(instruction)
+            setClarificationDepth((d) => d + 1)
+            setIsAnalyzing(false)
+            return
+          }
         }
       } catch { /* proceed on error */ }
       setIsAnalyzing(false)
@@ -833,8 +867,9 @@ export default function ChatPanel() {
             </button>
 
             {briefOpen && (
-              <div className="px-4 pb-4 space-y-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                <div className="flex items-center justify-between pt-3">
+              <div className="border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                {/* Top row: Templates + Reset */}
+                <div className="flex items-center justify-between px-4 pt-3 pb-2">
                   <button
                     className="rounded-full px-3 py-1 text-xs flex items-center gap-1.5 transition-colors"
                     style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}
@@ -856,158 +891,289 @@ export default function ChatPanel() {
                   </button>
                 </div>
 
-                {/* Page type selector */}
-                <div>
-                  <label className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                    {text('页面类型', 'Page Type')}
-                  </label>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {pageTypeConfigs.map((typeConfig) => {
-                      const isActiveType = typeConfig.id === briefForm.pageType
-                      return (
-                        <button
-                          key={typeConfig.id}
-                          type="button"
-                          className="rounded-[12px] border px-2 py-2 text-center text-xs transition-all"
-                          onClick={() => {
-                            const newDefault = typeConfig.directions[0]
-                            setBriefForm({
-                              pageType: typeConfig.id,
-                              directionId: newDefault.id,
-                              sections: typeConfig.defaultSections,
-                            })
-                          }}
-                          style={{
-                            background: isActiveType ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.4)',
-                            borderColor: isActiveType ? 'var(--border-accent)' : 'var(--border-subtle)',
-                            boxShadow: isActiveType ? 'var(--shadow-sm)' : 'none',
-                            color: isActiveType ? 'var(--text-primary)' : 'var(--text-muted)',
-                          }}
-                        >
-                          <div className="text-base leading-none mb-1">{typeConfig.icon}</div>
-                          <div className="font-medium leading-tight" style={{ fontSize: 10 }}>
-                            {isZh ? typeConfig.label : typeConfig.labelEn}
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {/* Dynamic brief fields based on page type */}
-                {activeTypeConfig.briefFields.map((field) => (
-                  <div key={field.key}>
-                    <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                      {isZh ? field.label : field.labelEn}
-                    </label>
-                    {field.multiline ? (
-                      <textarea
-                        className="input min-h-[72px] px-3 py-2"
-                        value={briefForm[field.key] as string}
-                        onChange={(e) => setBriefForm({ [field.key]: e.target.value } as Partial<BriefFormState>)}
-                        placeholder={isZh ? field.placeholder : field.placeholderEn}
-                      />
-                    ) : (
-                      <input
-                        className="input h-10 px-3"
-                        value={briefForm[field.key] as string}
-                        onChange={(e) => setBriefForm({ [field.key]: e.target.value } as Partial<BriefFormState>)}
-                        placeholder={isZh ? field.placeholder : field.placeholderEn}
-                      />
+                {/* Tab bar */}
+                <div className="mx-4 mb-3 flex gap-1 rounded-[12px] p-[3px]" style={{ background: 'var(--bg-hover)' }}>
+                  <button
+                    type="button"
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-[10px] py-1.5 text-xs font-medium transition-all"
+                    onClick={() => setBriefTab('content')}
+                    style={{
+                      background: briefTab === 'content' ? 'rgba(255,255,255,0.9)' : 'transparent',
+                      color: briefTab === 'content' ? 'var(--text-primary)' : 'var(--text-muted)',
+                      boxShadow: briefTab === 'content' ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+                    }}
+                  >
+                    <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    {text('内容', 'Content')}
+                  </button>
+                  <button
+                    type="button"
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-[10px] py-1.5 text-xs font-medium transition-all"
+                    onClick={() => setBriefTab('style')}
+                    style={{
+                      background: briefTab === 'style' ? 'rgba(255,255,255,0.9)' : 'transparent',
+                      color: briefTab === 'style' ? 'var(--text-primary)' : 'var(--text-muted)',
+                      boxShadow: briefTab === 'style' ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+                    }}
+                  >
+                    <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+                    </svg>
+                    {text('样式', 'Style')}
+                    {((briefForm.designSystemId && briefForm.designSystemId !== 'default') || briefForm.darkMode) && (
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--accent)' }} />
                     )}
-                  </div>
-                ))}
-
-                {/* Language + Dark mode row */}
-                <div className="flex items-center gap-2">
-                  <div className="flex-1">
-                    <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                      {text('内容语言', 'Content Lang')}
-                    </label>
-                    <select
-                      className="input h-9 px-2 text-xs"
-                      value={briefForm.outputLang}
-                      onChange={(e) => setBriefForm({ outputLang: e.target.value })}
-                    >
-                      {OUTPUT_LANGUAGES.map(lang => (
-                        <option key={lang.value} value={lang.value}>{lang.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                      {text('暗色', 'Dark')}
-                    </label>
-                    <button
-                      type="button"
-                      className="flex h-9 w-16 items-center justify-center rounded-[10px] border text-xs font-medium transition-all"
-                      onClick={() => setBriefForm({ darkMode: !briefForm.darkMode })}
-                      style={{
-                        background: briefForm.darkMode ? '#1e293b' : 'rgba(255,255,255,0.4)',
-                        borderColor: briefForm.darkMode ? '#334155' : 'var(--border-subtle)',
-                        color: briefForm.darkMode ? '#e2e8f0' : 'var(--text-muted)',
-                      }}
-                    >
-                      {briefForm.darkMode ? '🌙 ON' : '☀️ OFF'}
-                    </button>
-                  </div>
+                  </button>
                 </div>
 
-                {/* Direction picker */}
-                <div>
-                  <label className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                    {text('视觉方向', 'Visual Direction')}
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {directionPresets.map((preset) => {
-                      const isActive = preset.id === briefForm.directionId
-                      return (
+                {/* ── Content Tab ── */}
+                {briefTab === 'content' && (
+                  <div className="px-4 pb-4 space-y-3">
+                    {/* Page type selector */}
+                    <div>
+                      <label className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                        {text('页面类型', 'Page Type')}
+                      </label>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {pageTypeConfigs.map((typeConfig) => {
+                          const isActiveType = typeConfig.id === briefForm.pageType
+                          return (
+                            <button
+                              key={typeConfig.id}
+                              type="button"
+                              className="rounded-[12px] border px-1 py-2 text-center text-xs transition-all"
+                              onClick={() => {
+                                const newDefault = typeConfig.directions[0]
+                                const oldDefault = activeTypeConfig.defaultSections
+                                const shouldResetSections = !briefForm.sections.trim() || briefForm.sections === oldDefault
+                                setBriefForm({
+                                  pageType: typeConfig.id,
+                                  directionId: newDefault.id,
+                                  ...(shouldResetSections ? { sections: typeConfig.defaultSections } : {}),
+                                })
+                              }}
+                              style={{
+                                background: isActiveType ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.4)',
+                                borderColor: isActiveType ? 'var(--border-accent)' : 'var(--border-subtle)',
+                                boxShadow: isActiveType ? 'var(--shadow-sm)' : 'none',
+                                color: isActiveType ? 'var(--text-primary)' : 'var(--text-muted)',
+                              }}
+                            >
+                              <div className="text-base leading-none mb-1">{typeConfig.icon}</div>
+                              <div className="font-medium leading-tight" style={{ fontSize: 10 }}>
+                                {isZh ? typeConfig.label : typeConfig.labelEn}
+                              </div>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Dynamic brief fields */}
+                    {activeTypeConfig.briefFields.map((field) => (
+                      <div key={field.key}>
+                        <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                          {isZh ? field.label : field.labelEn}
+                        </label>
+                        {field.multiline ? (
+                          <textarea
+                            className="input min-h-[72px] px-3 py-2"
+                            value={briefForm[field.key] as string}
+                            onChange={(e) => setBriefForm({ [field.key]: e.target.value } as Partial<BriefFormState>)}
+                            placeholder={isZh ? field.placeholder : field.placeholderEn}
+                          />
+                        ) : (
+                          <input
+                            className="input h-10 px-3"
+                            value={briefForm[field.key] as string}
+                            onChange={(e) => setBriefForm({ [field.key]: e.target.value } as Partial<BriefFormState>)}
+                            placeholder={isZh ? field.placeholder : field.placeholderEn}
+                          />
+                        )}
+                      </div>
+                    ))}
+
+                    {/* Language + Dark mode */}
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1">
+                        <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                          {text('内容语言', 'Content Lang')}
+                        </label>
+                        <select
+                          className="input h-9 px-2 text-xs"
+                          value={briefForm.outputLang}
+                          onChange={(e) => setBriefForm({ outputLang: e.target.value })}
+                        >
+                          {OUTPUT_LANGUAGES.map(lang => (
+                            <option key={lang.value} value={lang.value}>{lang.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                          {text('暗色', 'Dark')}
+                        </label>
                         <button
-                          key={preset.id}
                           type="button"
-                          className="rounded-[16px] border px-3 py-2.5 text-left transition-all"
-                          onClick={() => setBriefForm({ directionId: preset.id })}
+                          className="flex h-9 w-16 items-center justify-center rounded-[10px] border text-xs font-medium transition-all"
+                          onClick={() => setBriefForm({ darkMode: !briefForm.darkMode })}
                           style={{
-                            background: isActive ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.52)',
-                            borderColor: isActive ? 'var(--border-accent)' : 'var(--border-subtle)',
-                            boxShadow: isActive ? 'var(--shadow-sm)' : 'none',
+                            background: briefForm.darkMode ? '#1e293b' : 'rgba(255,255,255,0.4)',
+                            borderColor: briefForm.darkMode ? '#334155' : 'var(--border-subtle)',
+                            color: briefForm.darkMode ? '#e2e8f0' : 'var(--text-muted)',
                           }}
                         >
-                          <div className="flex items-center justify-between gap-1">
-                            <span className="text-xs font-semibold leading-tight" style={{ color: 'var(--text-primary)' }}>
-                              {preset.name}
-                            </span>
-                            {isActive && (
-                              <svg className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--accent)' }} fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>
-                            )}
-                          </div>
-                          <p className="mt-1 text-xs leading-snug line-clamp-2" style={{ color: 'var(--text-muted)' }}>
-                            {preset.summary}
-                          </p>
+                          {briefForm.darkMode ? '🌙 ON' : '☀️ OFF'}
                         </button>
-                      )
-                    })}
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
 
-                <button className="btn btn-primary w-full mt-1" onClick={handleGenerate} disabled={isGenerating}>
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13 10V3L4 14h7v7l9-11h-7Z" />
-                  </svg>
-                  {isGenerating ? text('生成中...', 'Generating...') : text('根据 brief 生成', 'Generate from brief')}
-                </button>
+                {/* ── Style Tab ── */}
+                {briefTab === 'style' && (
+                  <div className="px-4 pb-4 space-y-4">
+                    {/* Design system */}
+                    <div>
+                      <label className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                        {text('设计系统', 'Design System')}
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {DESIGN_SYSTEMS.map((ds) => {
+                          const isActive = (briefForm.designSystemId || 'default') === ds.id
+                          return (
+                            <button
+                              key={ds.id}
+                              type="button"
+                              title={isZh ? ds.description : ds.descriptionEn}
+                              className="rounded-[10px] border px-2 py-1 text-xs transition-all"
+                              onClick={() => setBriefForm({ designSystemId: ds.id })}
+                              style={{
+                                background: isActive ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.4)',
+                                borderColor: isActive ? 'var(--border-accent)' : 'var(--border-subtle)',
+                                boxShadow: isActive ? 'var(--shadow-sm)' : 'none',
+                                color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+                                fontWeight: isActive ? 600 : 400,
+                              }}
+                            >
+                              {ds.emoji} {ds.name}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {briefForm.designSystemId && briefForm.designSystemId !== 'default' && (() => {
+                        const ds = DESIGN_SYSTEMS.find(d => d.id === briefForm.designSystemId)
+                        return ds ? (
+                          <p className="mt-2 text-[11px] leading-snug" style={{ color: 'var(--text-muted)' }}>
+                            {isZh ? ds.description : ds.descriptionEn}
+                          </p>
+                        ) : null
+                      })()}
+                    </div>
+
+                    {/* Visual direction */}
+                    <div>
+                      <label className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                        {text('视觉方向', 'Visual Direction')}
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {directionPresets.map((preset) => {
+                          const isActive = preset.id === briefForm.directionId
+                          return (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              className="rounded-[16px] border px-3 py-2.5 text-left transition-all"
+                              onClick={() => setBriefForm({ directionId: preset.id })}
+                              style={{
+                                background: isActive ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.52)',
+                                borderColor: isActive ? 'var(--border-accent)' : 'var(--border-subtle)',
+                                boxShadow: isActive ? 'var(--shadow-sm)' : 'none',
+                              }}
+                            >
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="text-xs font-semibold leading-tight" style={{ color: 'var(--text-primary)' }}>
+                                  {preset.name}
+                                </span>
+                                {isActive && (
+                                  <svg className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--accent)' }} fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  </svg>
+                                )}
+                              </div>
+                              <p className="mt-1 text-xs leading-snug line-clamp-2" style={{ color: 'var(--text-muted)' }}>
+                                {preset.summary}
+                              </p>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Generate button — always visible */}
+                <div className="px-4 pb-4">
+                  <button className="btn btn-primary w-full" onClick={handleGenerate} disabled={isGenerating}>
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13 10V3L4 14h7v7l9-11h-7Z" />
+                    </svg>
+                    {isGenerating ? text('生成中...', 'Generating...') : text('根据 brief 生成', 'Generate from brief')}
+                  </button>
+                </div>
               </div>
             )}
           </div>
+
+          {/* Empty state */}
+          {messages.length === 0 && !isGenerating && !isAnalyzing && (
+            <div className="flex flex-col items-center py-8 text-center gap-3 px-4">
+              <div
+                className="flex h-11 w-11 items-center justify-center rounded-[16px]"
+                style={{ background: 'var(--gradient-brand)', boxShadow: '0 4px 16px rgba(0,0,0,0.12)' }}
+              >
+                <svg className="h-5 w-5 fill-white" viewBox="0 0 24 24">
+                  <path d="M4 4h4v16H4V4Zm4 0h4l6 16h-4L9.5 8.5 8 20H4L8 4Z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Nova 已就绪</p>
+                <p className="mt-0.5 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  {text('在下方输入概念，或点击模板快速开始', 'Type a concept below or pick a template')}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-1.5 justify-center">
+                {[
+                  text('SaaS 落地页', 'SaaS landing page'),
+                  text('产品详情页', 'Product detail page'),
+                  text('个人作品集', 'Portfolio site'),
+                ].map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    className="rounded-full px-3 py-1 text-xs transition-all"
+                    style={{
+                      background: 'rgba(255,255,255,0.7)',
+                      border: '1px solid var(--border-subtle)',
+                      color: 'var(--text-secondary)',
+                    }}
+                    onClick={() => setChatInput(s)}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Chat messages */}
           {messages.length > 0 && (
             <div className="space-y-2">
               {messages.map((msg, index) => (
                 <div
-                  key={index}
+                  key={msg.id ?? String(index)}
                   className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   {msg.role === 'assistant' && (
@@ -1025,6 +1191,7 @@ export default function ChatPanel() {
                     style={{
                       background: msg.role === 'user' ? 'var(--bg-accent-soft)' : 'rgba(255,255,255,0.6)',
                       color: 'var(--text-primary)',
+                      border: msg.role === 'assistant' ? '1px solid var(--border-subtle)' : 'none',
                     }}
                   >
                     {msg.summary || msg.content}
@@ -1035,7 +1202,7 @@ export default function ChatPanel() {
             </div>
           )}
 
-          {/* Thinking animation */}
+          {/* Generation progress */}
           {(isAnalyzing || isGenerating) && (
             <div className="flex gap-2 justify-start">
               <div
@@ -1046,17 +1213,60 @@ export default function ChatPanel() {
                   <path d="M4 4h4v16H4V4Zm4 0h4l6 16h-4L9.5 8.5 8 20H4L8 4Z" />
                 </svg>
               </div>
-              <div
-                className="flex items-center gap-1.5 rounded-[14px] px-4 py-2.5"
-                style={{ background: 'rgba(255,255,255,0.6)' }}
-              >
-                <span className="thinking-dot" />
-                <span className="thinking-dot" style={{ animationDelay: '0.15s' }} />
-                <span className="thinking-dot" style={{ animationDelay: '0.3s' }} />
-                <span className="ml-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  {isAnalyzing ? text('分析中…', 'Analyzing…') : text('生成中…', 'Generating…')}
-                </span>
-              </div>
+              {isGenerating && generationTimeline.length > 0 ? (
+                <div
+                  className="flex-1 rounded-[14px] px-3 py-2.5"
+                  style={{ background: 'rgba(255,255,255,0.6)', border: '1px solid var(--border-subtle)' }}
+                >
+                  {activeGenerationLabel && (
+                    <p className="mb-2 text-xs font-medium truncate" style={{ color: 'var(--text-secondary)' }}>
+                      {activeGenerationLabel}
+                    </p>
+                  )}
+                  <div className="space-y-1.5">
+                    {generationTimeline.map((step) => (
+                      <div key={step.id} className="flex items-center gap-2">
+                        <div className="shrink-0">
+                          {step.status === 'completed' ? (
+                            <svg className="h-3 w-3" style={{ color: 'var(--accent)' }} fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          ) : step.status === 'active' ? (
+                            <span className="thinking-dot block" style={{ background: 'var(--accent)' }} />
+                          ) : step.status === 'error' ? (
+                            <span className="h-2 w-2 rounded-full block" style={{ background: '#ef4444' }} />
+                          ) : (
+                            <span className="h-2 w-2 rounded-full block" style={{ background: 'var(--border-subtle)' }} />
+                          )}
+                        </div>
+                        <span
+                          className="text-[11px]"
+                          style={{
+                            color: step.status === 'pending' ? 'var(--text-disabled)' :
+                                   step.status === 'completed' ? 'var(--text-secondary)' :
+                                   'var(--text-primary)',
+                            fontWeight: step.status === 'active' ? 500 : 400,
+                          }}
+                        >
+                          {step.label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div
+                  className="flex items-center gap-1.5 rounded-[14px] px-4 py-2.5"
+                  style={{ background: 'rgba(255,255,255,0.6)', border: '1px solid var(--border-subtle)' }}
+                >
+                  <span className="thinking-dot" />
+                  <span className="thinking-dot" style={{ animationDelay: '0.15s' }} />
+                  <span className="thinking-dot" style={{ animationDelay: '0.3s' }} />
+                  <span className="ml-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {isAnalyzing ? text('分析中…', 'Analyzing…') : text('生成中…', 'Generating…')}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
@@ -1118,9 +1328,12 @@ export default function ChatPanel() {
                   ×
                 </button>
               </div>
-              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              <span
+                className="text-xs"
+                style={{ color: attachedImage && !visionSupported ? '#c45c0a' : 'var(--text-muted)' }}
+              >
                 {attachedImage && !visionSupported
-                  ? text('当前 AI 不支持图像，建议切换到 Claude 或 GPT-4o', 'Provider does not support images — switch to Claude or GPT-4o')
+                  ? text('⚠️ 当前 AI 不支持图像，建议切换到 Claude 或 GPT-4o', '⚠️ Provider does not support images — switch to Claude or GPT-4o')
                   : text('图片已附加，发送后以图生页', 'Image attached — will generate from image')}
               </span>
             </div>
@@ -1172,10 +1385,10 @@ export default function ChatPanel() {
               <button
                 type="button"
                 className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors"
-                style={{ color: attachedImage ? 'var(--accent-light)' : 'var(--text-disabled)' }}
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isGenerating}
-                title={text('上传图片', 'Upload image')}
+                style={{ color: attachedImage ? 'var(--accent-light)' : visionSupported ? 'var(--text-secondary)' : 'var(--text-disabled)' }}
+                onClick={() => visionSupported && fileInputRef.current?.click()}
+                disabled={isGenerating || !visionSupported}
+                title={visionSupported ? text('上传图片', 'Upload image') : text('当前提供商不支持图像输入', 'Current provider does not support image input')}
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M2.25 15.75l5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
@@ -1190,7 +1403,7 @@ export default function ChatPanel() {
                 </div>
               ) : (
                 <span className="text-[11px] select-none" style={{ color: 'var(--text-disabled)' }}>
-                  {navigator.platform.startsWith('Mac')
+                  {(/mac|iphone|ipad/i.test(navigator.userAgent))
                     ? text('⌘ Enter 发送', '⌘ Enter to send')
                     : text('Ctrl+Enter 发送', 'Ctrl+Enter to send')}
                 </span>
@@ -1268,6 +1481,7 @@ export default function ChatPanel() {
               { id: 'ecommerce', label: text('电商', 'E-com') },
               { id: 'portfolio', label: text('主页', 'Portfolio') },
               { id: 'component', label: text('组件', 'Component') },
+              { id: 'slide', label: text('幻灯片', 'Slides') },
             ].map(tab => (
               <button
                 key={tab.id}
@@ -1293,7 +1507,7 @@ export default function ChatPanel() {
                   <button
                     key={tpl.id}
                     type="button"
-                    className="rounded-[14px] border overflow-hidden text-left transition-all hover:scale-[1.02] active:scale-[0.98]"
+                    className="rounded-[14px] border overflow-hidden text-left transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed disabled:scale-100"
                     style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}
                     onClick={() => handleApplyTemplate(tpl)}
                     disabled={isGenerating}

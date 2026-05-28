@@ -74,7 +74,7 @@ export interface GenerationTimelineStep {
   status: GenerationStepStatus
 }
 
-export type PageType = 'landing' | 'app' | 'email' | 'ecommerce' | 'portfolio' | 'component'
+export type PageType = 'landing' | 'app' | 'email' | 'ecommerce' | 'portfolio' | 'component' | 'slide'
 
 export interface BriefFormState {
   product: string
@@ -86,6 +86,7 @@ export interface BriefFormState {
   pageType: PageType
   outputLang: string
   darkMode: boolean
+  designSystemId: string
 }
 
 interface AppState {
@@ -198,6 +199,7 @@ export const DEFAULT_BRIEF_FORM: BriefFormState = {
   pageType: 'landing',
   outputLang: 'auto',
   darkMode: false,
+  designSystemId: 'default',
 }
 
 function loadLocaleFromStorage(): Locale {
@@ -223,10 +225,18 @@ function loadMessagesFromStorage(projectId: string): Message[] {
 }
 
 function saveVersionsToStorage(projectId: string, versions: Version[]) {
+  const key = `nova-versions-${projectId}`
   try {
-    localStorage.setItem(`nova-versions-${projectId}`, JSON.stringify(versions))
-  } catch (error) {
-    console.warn('Failed to save versions:', error)
+    localStorage.setItem(key, JSON.stringify(versions))
+  } catch (e) {
+    const isQuota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || (e as any).code === 22)
+    if (isQuota && versions.length > 5) {
+      // Prune to most recent 5 versions and retry
+      try {
+        localStorage.setItem(key, JSON.stringify(versions.slice(-5)))
+      } catch { /* give up silently */ }
+    }
+    console.warn('Failed to save versions:', e)
   }
 }
 
@@ -377,7 +387,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!page) return
     set({ currentPageId: pageId, generatedCode: page.code })
   },
-  addPage: (name, path, deviceType = 'mobile') => {
+  addPage: (name, path, deviceType = 'desktop') => {
     const { currentProject, projectPages, projects } = get()
     if (!currentProject) return
 
@@ -402,12 +412,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { currentProject, projectPages, currentPageId, projects } = get()
     if (!currentProject || projectPages.length <= 1) return
 
+    const deletedIdx = projectPages.findIndex((p) => p.id === pageId)
     const updatedPages = projectPages.filter((p) => p.id !== pageId)
     const updatedProject = { ...currentProject, pages: updatedPages }
     const updatedProjects = projects.map((p) => p.id === currentProject.id ? updatedProject : p)
-    const nextPage = currentPageId === pageId
-      ? updatedPages[0]
-      : (projectPages.find((p) => p.id === currentPageId) ?? updatedPages[0])
+
+    let nextPage: Page | undefined
+    if (currentPageId === pageId) {
+      // Navigate to next page, or previous if deleting last
+      nextPage = updatedPages[deletedIdx] ?? updatedPages[deletedIdx - 1] ?? updatedPages[0]
+    } else {
+      nextPage = projectPages.find((p) => p.id === currentPageId) ?? updatedPages[0]
+    }
 
     if (!nextPage) return
 
@@ -424,7 +440,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updatedProjects = projects.map((p) => p.id === currentProject.id ? updatedProject : p)
 
     set({ projectPages: updatedPages, currentProject: updatedProject, projects: updatedProjects })
-    localStorage.setItem('nova-projects', JSON.stringify(updatedProjects))
+    try {
+      localStorage.setItem('nova-projects', JSON.stringify(updatedProjects))
+    } catch (e) {
+      const isQuota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || (e as any).code === 22)
+      if (isQuota) {
+        set({ error: pickLocale(get().locale, '存储空间不足，内容可能未完全保存，建议导出 HTML 备份。', 'Storage quota exceeded — some changes may not be saved. Export HTML to back up your work.') })
+      }
+    }
 
     if (currentProject.dirName) {
       const page = updatedPages.find((p) => p.id === currentPageId)
@@ -477,8 +500,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { versions } = get()
     const version = versions.find((item) => item.id === versionId)
     if (!version) return
-
     set({ generatedCode: version.code, activeVersionId: version.id })
+    get().updateCurrentPageCode(version.code)
   },
   deleteVersion: (versionId) => {
     const { currentProject, versions, activeVersionId } = get()
@@ -581,7 +604,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         : get().currentProject
 
     set({ projects, currentProject })
-    localStorage.setItem('nova-projects', JSON.stringify(projects))
+    try {
+      localStorage.setItem('nova-projects', JSON.stringify(projects))
+    } catch (e) {
+      const isQuota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || (e as any).code === 22)
+      if (isQuota) {
+        set({ error: pickLocale(get().locale, '存储空间不足，项目可能未完全保存。', 'Storage quota exceeded — project may not be saved.') })
+      }
+    }
 
     const project = projects.find((p) => p.id === id)
     if (project?.dirName) {
@@ -620,13 +650,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     localStorage.removeItem(`nova-versions-${id}`)
 
     if (project?.dirName && window.electronAPI?.deleteProjectDir) {
-      window.electronAPI.deleteProjectDir({ projectDirName: project.dirName }).catch(() => {})
+      window.electronAPI.deleteProjectDir({ projectDirName: project.dirName }).catch((err: unknown) => {
+        console.warn('Failed to delete project directory:', err)
+      })
     }
   },
 
   messages: [],
   addMessage: (message) => {
-    const newMessages = [...get().messages, message]
+    const msg = message.id ? message : { ...message, id: nanoid() }
+    const all = [...get().messages, msg]
+    const newMessages = all.length > 100 ? all.slice(all.length - 100) : all
     set({ messages: newMessages })
 
     const { currentProject } = get()
@@ -660,14 +694,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   cancelGeneration: () => {
     const { abortController } = get()
     if (!abortController) return
-
     abortController.abort()
-    set({
-      abortController: null,
-      isGenerating: false,
-      error: pickLocale(get().locale, '生成已取消', 'Generation canceled'),
-    })
-    setTimeout(() => set({ error: null }), 3000)
+    set({ abortController: null, isGenerating: false })
   },
 
   generatedCode: '',
@@ -690,7 +718,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleChatCollapsed: () => set({ chatCollapsed: !get().chatCollapsed }),
 
   error: null,
-  setError: (error) => set({ error }),
+  setError: (error) => {
+    set({ error })
+    if (error) {
+      setTimeout(() => {
+        if (useAppStore.getState().error === error) set({ error: null })
+      }, 6000)
+    }
+  },
 
   success: null,
   setSuccess: (msg) => set({ success: msg }),

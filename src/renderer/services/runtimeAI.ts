@@ -20,7 +20,7 @@ export type ImageData = {
 }
 
 // Providers that support image input in their messages API
-const VISION_PROVIDERS = new Set<AIProvider>(['anthropic', 'openai', 'openrouter', 'custom'])
+const VISION_PROVIDERS = new Set<AIProvider>(['anthropic', 'openai', 'openrouter', 'custom', 'moonshot', 'qwen', 'deepseek', 'baichuan'])
 
 export function supportsVision(provider: AIProvider): boolean {
   return VISION_PROVIDERS.has(provider)
@@ -35,20 +35,20 @@ export class RuntimeAIService {
 
   async testConnection(): Promise<TestResult> {
     const start = Date.now()
-
+    const attempt = async (): Promise<string> => {
+      return this.generate('回复"连接成功"四个字', [], true)
+    }
     try {
-      const response = await this.generate('回复"连接成功"四个字', [], true)
-      return {
-        success: true,
-        latency: Date.now() - start,
-        model: this.config.model,
-        response: response.slice(0, 100),
-      }
-    } catch (error: any) {
-      return {
-        success: false,
-        latency: Date.now() - start,
-        error: error?.message || '连接失败',
+      const response = await attempt()
+      return { success: true, latency: Date.now() - start, model: this.config.model, response: response.slice(0, 100) }
+    } catch (firstError: any) {
+      // One retry after 1s
+      await new Promise(r => setTimeout(r, 1000))
+      try {
+        const response = await attempt()
+        return { success: true, latency: Date.now() - start, model: this.config.model, response: response.slice(0, 100) }
+      } catch (error: any) {
+        return { success: false, latency: Date.now() - start, error: error?.message || '连接失败' }
       }
     }
   }
@@ -227,15 +227,13 @@ export class RuntimeAIService {
   }
 
   private buildAnthropicMessages(messages: Message[], imageData?: ImageData) {
-    return messages.map((m, i) => {
-      if (i === messages.length - 1 && m.role === 'user' && imageData) {
+    const sliced = messages.slice(-10)
+    return sliced.map((m, i) => {
+      if (i === sliced.length - 1 && m.role === 'user' && imageData) {
         return {
           role: m.role,
           content: [
-            {
-              type: 'image',
-              source: { type: 'base64', media_type: imageData.mimeType, data: imageData.base64 },
-            },
+            { type: 'image', source: { type: 'base64', media_type: imageData.mimeType, data: imageData.base64 } },
             { type: 'text', text: m.content },
           ],
         }
@@ -574,9 +572,13 @@ export class RuntimeAIService {
   }
 
   private getBaseHeaders(): Record<string, string> {
+    const normalized: Record<string, string> = {}
+    for (const [k, v] of Object.entries(this.config.customHeaders || {})) {
+      normalized[k.toLowerCase()] = v
+    }
     return {
-      'Content-Type': 'application/json',
-      ...this.config.customHeaders,
+      'content-type': 'application/json',
+      ...normalized,
     }
   }
 
@@ -683,6 +685,11 @@ export class RuntimeAIService {
     if (fixed.includes('<style') && !fixed.includes('</style>')) fixed += '\n</style>'
     if (fixed.includes('<body') && !fixed.includes('</body>')) fixed += '\n</body>'
     if (fixed.includes('<html') && !fixed.includes('</html>')) fixed += '\n</html>'
+
+    // Ensure the result has minimum viable structure — if body is effectively empty, return original
+    const hasBody = /<body[\s>]/i.test(fixed)
+    const hasContent = /<(h[1-6]|p|div|section|main|header|nav|ul|ol|table)\b/i.test(fixed)
+    if (hasBody && !hasContent) return html
 
     return fixed
   }

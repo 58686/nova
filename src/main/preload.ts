@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   openInBrowser: (html: string) =>
     ipcRenderer.invoke('open-in-browser', html),
+  exportPdf: (html: string, defaultName?: string) =>
+    ipcRenderer.invoke('export-pdf', html, defaultName),
 
   // Settings
   getSettings: () =>

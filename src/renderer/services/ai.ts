@@ -69,9 +69,10 @@ export interface ConfigPreset {
 
 // 消息
 export interface Message {
+  id?: string
   role: 'user' | 'assistant' | 'system'
   content: string
-  summary?: string  // AI消息摘要
+  summary?: string
 }
 
 // 测试结果

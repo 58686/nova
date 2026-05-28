@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { nanoid } from 'nanoid'
 import { AIConfig, AIProvider, PROVIDERS } from '../services/ai'
 
 export interface AIConfigPreset {
@@ -114,7 +115,7 @@ export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
   
   addPreset: (name, config) => {
     const newPreset: AIConfigPreset = {
-      id: Date.now().toString(),
+      id: nanoid(),
       name,
       config,
       isActive: false,
@@ -175,7 +176,15 @@ export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
       return configured.config
     }
     
-    // 返回第一个配置
-    return presets[0]?.config || null
+    // Return first preset config, or a minimal default
+    return presets[0]?.config ?? {
+      provider: 'anthropic' as AIProvider,
+      apiKey: '',
+      baseUrl: 'https://api.anthropic.com',
+      model: 'claude-3-5-sonnet-20241022',
+      temperature: 0.7,
+      maxTokens: 4096,
+      timeout: 120000,
+    }
   },
 }))

@@ -23,6 +23,7 @@ declare global {
         onChunk: (chunk: string) => void,
       ) => Promise<{ ok: boolean; status: number; body?: string }>
       openInBrowser: (html: string) => Promise<{ success: boolean; error?: string }>
+      exportPdf: (html: string, defaultName?: string) => Promise<{ success: boolean; path?: string; error?: string }>
 
       // Auto updater
       getAppVersion: () => Promise<string>

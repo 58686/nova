@@ -109,6 +109,13 @@ textarea {
   background: rgba(181, 135, 109, 0.18);
 }
 
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(122, 101, 88, 0.22) transparent;
+}
+
+/* Chrome / Safari / Edge */
 ::-webkit-scrollbar {
   width: 7px;
   height: 7px;

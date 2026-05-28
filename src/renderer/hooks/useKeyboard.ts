@@ -9,6 +9,9 @@ export function useKeyboard() {
     isGenerating,
     showSettings,
     togglePreviewFocus,
+    versions,
+    activeVersionId,
+    restoreVersion,
   } = useAppStore()
 
   useEffect(() => {
@@ -43,11 +46,21 @@ export function useKeyboard() {
           cancelGeneration()
         }
       }
+
+      if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
+        // Only undo if not in a text input/textarea
+        const target = event.target as HTMLElement
+        if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') {
+          event.preventDefault()
+          const idx = versions.findIndex(v => v.id === activeVersionId)
+          if (idx > 0) restoreVersion(versions[idx - 1].id)
+        }
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [toggleSettings, toggleSidebar, cancelGeneration, isGenerating, showSettings, togglePreviewFocus])
+  }, [toggleSettings, toggleSidebar, cancelGeneration, isGenerating, showSettings, togglePreviewFocus, versions, activeVersionId, restoreVersion])
 }
 
 export const SHORTCUTS = [
@@ -57,4 +70,5 @@ export const SHORTCUTS = [
   { keys: ['Ctrl', 'B'], description: 'Toggle sidebar' },
   { keys: ['Ctrl', 'P'], description: 'Focus preview' },
   { keys: ['Esc'], description: 'Cancel / close' },
+  { keys: ['Ctrl', 'Z'], description: 'Undo last version' },
 ]
