@@ -156,7 +156,7 @@ body { background: #ffffff !important; color: #171717 !important; }
 }
 
 export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
-  const { activeVersionId, currentProject, generatedCode, setError, setSuccess, versions,
+  const { activeVersionId, currentProject, generatedCode, isGenerating, setError, setSuccess, versions,
     currentPageId, projectPages, setCurrentPage, addPage, deletePage } = useAppStore()
   const { locale, text } = useLocale()
   const [viewportMode, setViewportMode] = useState<ViewportMode>('desktop')
@@ -456,7 +456,14 @@ export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
                   </svg>
                   <span className={isActive ? 'font-semibold' : ''}>{page.name}</span>
                   {!hasCode && (
-                    <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: 'rgba(200,121,65,0.45)' }} />
+                    isGenerating ? (
+                      <svg className="h-3 w-3 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24" style={{ color: 'rgba(200,121,65,0.7)' }}>
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                    ) : (
+                      <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: 'rgba(200,121,65,0.45)' }} />
+                    )
                   )}
                 </button>
                 {projectPages.length > 1 && (

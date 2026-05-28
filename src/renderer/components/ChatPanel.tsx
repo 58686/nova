@@ -393,6 +393,7 @@ export default function ChatPanel() {
     updateCurrentPageCode,
     updatePageCode,
     addPage,
+    deletePage,
     chatCollapsed,
     toggleChatCollapsed,
   } = useAppStore()
@@ -481,25 +482,35 @@ export default function ChatPanel() {
     setActiveGenerationLabel(label)
     setGenerationTimeline(buildTimeline(timelineDefinitions))
 
+    // Track page stubs created during linked-page generation so we can clean them up on abort/error
+    const stubPageIds: string[] = []
+
     try {
-      await wait(180)
-      if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError')
+      // Brief is already in hand — complete immediately
       updateTimelineStep(setGenerationTimeline, 'brief', 'completed')
       updateTimelineStep(setGenerationTimeline, 'structure', 'active')
 
-      await wait(180)
-      if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError')
-      updateTimelineStep(setGenerationTimeline, 'structure', 'completed')
-      updateTimelineStep(setGenerationTimeline, 'visual', 'active')
-
-      updateTimelineStep(setGenerationTimeline, 'visual', 'completed')
-      updateTimelineStep(setGenerationTimeline, 'html', 'active')
-
       let rawBuffer = ''
       let lastPreviewUpdate = 0
+      let structureDone = false
+      let visualDone = false
       for await (const chunk of service.stream(prompt, messages.slice(-4), controller.signal, imageData)) {
         if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError')
         rawBuffer += chunk
+
+        // First tokens → structure forming
+        if (!structureDone) {
+          structureDone = true
+          updateTimelineStep(setGenerationTimeline, 'structure', 'completed')
+          updateTimelineStep(setGenerationTimeline, 'visual', 'active')
+        }
+        // 400+ chars → HTML skeleton visible, visual refinement starting
+        if (!visualDone && rawBuffer.length > 400) {
+          visualDone = true
+          updateTimelineStep(setGenerationTimeline, 'visual', 'completed')
+          updateTimelineStep(setGenerationTimeline, 'html', 'active')
+        }
+
         const now = Date.now()
         if (now - lastPreviewUpdate > 600) {
           const partial = service.extractHTML(rawBuffer)
@@ -558,7 +569,10 @@ export default function ChatPanel() {
           const name = link.linkText || link.path.replace(/^\//, '').replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
           addPage(name, link.path)
           const p = useAppStore.getState().projectPages.find((pg) => pg.path === link.path)
-          if (p) created.push({ pageId: p.id, linkText: link.linkText, path: link.path })
+          if (p) {
+            created.push({ pageId: p.id, linkText: link.linkText, path: link.path })
+            stubPageIds.push(p.id)
+          }
         }
 
         const refHtml = html
@@ -613,6 +627,11 @@ export default function ChatPanel() {
         }
       }
     } catch (error) {
+      // Clean up empty page stubs created before the abort/error
+      stubPageIds.forEach((id) => {
+        const p = useAppStore.getState().projectPages.find((pg) => pg.id === id)
+        if (p && !p.code.trim()) deletePage(id)
+      })
       if ((error as Error).name !== 'AbortError') {
         failActiveTimeline(setGenerationTimeline)
         setError((error as Error).message || text('生成失败', 'Generation failed'))
@@ -1197,7 +1216,9 @@ export default function ChatPanel() {
                 </div>
               ) : (
                 <span className="text-[11px] select-none" style={{ color: 'var(--text-disabled)' }}>
-                  {text('⌘ Enter 发送', '⌘ Enter to send')}
+                  {navigator.platform.startsWith('Mac')
+                    ? text('⌘ Enter 发送', '⌘ Enter to send')
+                    : text('Ctrl+Enter 发送', 'Ctrl+Enter to send')}
                 </span>
               )}
             </div>
@@ -1219,14 +1240,17 @@ export default function ChatPanel() {
               <button
                 type="button"
                 className="flex h-8 w-8 items-center justify-center rounded-full transition-all disabled:opacity-30"
-                style={{
-                  background: chatInput.trim() || attachedImage ? 'var(--gradient-brand)' : 'rgba(0,0,0,0.08)',
-                  color: chatInput.trim() || attachedImage ? 'white' : 'var(--text-disabled)',
-                  boxShadow: chatInput.trim() || attachedImage ? 'var(--shadow-sm)' : 'none',
-                }}
+                style={(() => {
+                  const canSend = !!(chatInput.trim() || attachedImage) && !(attachedImage && !visionSupported && !chatInput.trim())
+                  return {
+                    background: canSend ? 'var(--gradient-brand)' : 'rgba(0,0,0,0.08)',
+                    color: canSend ? 'white' : 'var(--text-disabled)',
+                    boxShadow: canSend ? 'var(--shadow-sm)' : 'none',
+                  }
+                })()}
                 onClick={handleCustomChat}
-                disabled={!chatInput.trim() && !attachedImage}
-                title={text('发送 (Ctrl+Enter)', 'Send (Ctrl+Enter)')}
+                disabled={(!chatInput.trim() && !attachedImage) || (!!attachedImage && !visionSupported && !chatInput.trim())}
+                title={attachedImage && !visionSupported ? text('当前 AI 不支持图像，请先切换到 Claude 或 GPT-4o', 'Provider does not support images — switch to Claude or GPT-4o') : text('发送 (Ctrl+Enter)', 'Send (Ctrl+Enter)')}
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M5 12h14M12 5l7 7-7 7" />

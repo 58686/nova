@@ -111,24 +111,31 @@ export default function VersionHistory() {
                   </button>
 
                   {showDeleteConfirm === version.id ? (
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => {
-                          deleteVersion(version.id)
-                          setShowDeleteConfirm(null)
-                        }}
-                        className="rounded-md px-2 py-1 text-[10px] text-white"
-                        style={{ background: '#ef4444' }}
-                      >
-                        {text('删除', 'Delete')}
-                      </button>
-                      <button
-                        onClick={() => setShowDeleteConfirm(null)}
-                        className="rounded-md px-2 py-1 text-[10px]"
-                        style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)' }}
-                      >
-                        {text('取消', 'Cancel')}
-                      </button>
+                    <div className="flex flex-col items-end gap-1">
+                      {isActive && (
+                        <span className="text-[10px] font-medium" style={{ color: '#ef4444' }}>
+                          {text('⚠️ 正在删除当前版本', '⚠️ This is the active version')}
+                        </span>
+                      )}
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            deleteVersion(version.id)
+                            setShowDeleteConfirm(null)
+                          }}
+                          className="rounded-md px-2 py-1 text-[10px] text-white"
+                          style={{ background: '#ef4444' }}
+                        >
+                          {isActive ? text('仍然删除', 'Delete anyway') : text('删除', 'Delete')}
+                        </button>
+                        <button
+                          onClick={() => setShowDeleteConfirm(null)}
+                          className="rounded-md px-2 py-1 text-[10px]"
+                          style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)' }}
+                        >
+                          {text('取消', 'Cancel')}
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <button

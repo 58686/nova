@@ -372,12 +372,17 @@ export default function CanvasView({ onSwitchToPreview }: CanvasViewProps) {
 
   const stepZoom = (dir: 1 | -1) => {
     setZoom((z) => {
-      const idx = ZOOM_STEPS.findIndex((s) => s >= z)
-      if (dir === 1) return ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, idx < 0 ? ZOOM_STEPS.length - 1 : idx + 1)]
-      const below = ZOOM_STEPS.filter((s) => s < z)
+      if (dir === 1) {
+        const above = ZOOM_STEPS.filter((s) => s > z + 0.001)
+        return above.length ? above[0] : ZOOM_STEPS[ZOOM_STEPS.length - 1]
+      }
+      const below = ZOOM_STEPS.filter((s) => s < z - 0.001)
       return below.length ? below[below.length - 1] : ZOOM_STEPS[0]
     })
   }
+
+  const atMinZoom = zoom <= ZOOM_STEPS[0] + 0.001
+  const atMaxZoom = zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1] - 0.001
 
   const resetView = () => { setZoom(0.85); setOffset({ x: 48, y: 48 }) }
 
@@ -448,10 +453,11 @@ export default function CanvasView({ onSwitchToPreview }: CanvasViewProps) {
           {/* Zoom controls */}
           <div className="flex items-center gap-0.5 rounded-[12px] p-0.5" style={{ background: 'rgba(255,255,255,0.4)' }}>
             <button
-              className="btn-icon"
+              className="btn-icon disabled:opacity-30"
               onClick={() => stepZoom(-1)}
               style={{ width: 26, height: 26 }}
-              title="Zoom out"
+              disabled={atMinZoom}
+              title={atMinZoom ? text('已到最小缩放', 'Minimum zoom reached') : 'Zoom out'}
             >
               <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 12h14" />
@@ -476,10 +482,11 @@ export default function CanvasView({ onSwitchToPreview }: CanvasViewProps) {
               {Math.round(zoom * 100)}%
             </button>
             <button
-              className="btn-icon"
+              className="btn-icon disabled:opacity-30"
               onClick={() => stepZoom(1)}
               style={{ width: 26, height: 26 }}
-              title="Zoom in"
+              disabled={atMaxZoom}
+              title={atMaxZoom ? text('已到最大缩放', 'Maximum zoom reached') : 'Zoom in'}
             >
               <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 5v14M5 12h14" />
