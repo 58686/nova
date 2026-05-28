@@ -320,22 +320,28 @@ const COMPONENT_FIELDS: BriefField[] = [
 
 // ── Prompt builders per type ──────────────────────────────────────────────────
 
+const HTML_SAFETY_RULES = `
+CRITICAL HTML OUTPUT RULES — MUST FOLLOW:
+1. Output a single, complete, self-contained HTML document starting with <!DOCTYPE html>.
+2. Every HTML element MUST use a real HTML tag name (div, span, nav, aside, main, header, section, ul, li, button, etc.). NEVER write angle-bracket syntax as visible text content (e.g. "< class=" or "<div class=" must never appear as readable text on the page).
+3. All CSS must be in a <style> block in <head>. Never use style attributes unless absolutely required for email.
+4. Do NOT use template variables, placeholder syntax like {{variable}}, {var}, or <%=var%> anywhere in the output.
+5. Do NOT output React JSX, Vue templates, Svelte, Angular, or any component framework syntax.
+6. Do NOT use any external JavaScript libraries, CDN links, or script tags that fetch remote resources.
+7. Charts and graphs MUST be drawn with pure CSS or inline SVG — never use Chart.js, D3, or canvas APIs.
+8. The page must render correctly with zero JavaScript — all content must be in the HTML markup.
+9. Use realistic, plausible mock content — never write "[placeholder]", "Lorem ipsum", or "TODO" as visible text.
+10. Images must be CSS gradient backgrounds or inline SVG — never use broken <img src=""> with fake URLs.`.trim()
+
 export function buildPromptForType(brief: BriefFormState, direction: DirectionPreset, pageContext = ''): string {
   const lang = brief.outputLang && brief.outputLang !== 'auto'
-    ? `\nIMPORTANT: All visible text content in the page MUST be written in ${LANG_NAMES[brief.outputLang] || brief.outputLang}. Do not use English unless the language is set to English.`
+    ? `\nLANGUAGE: All visible text content in the page MUST be written in ${LANG_NAMES[brief.outputLang] || brief.outputLang}. Do not mix in English unless the target language is English.`
     : ''
   const darkInstruction = brief.darkMode
-    ? '\nDARK MODE: Use a dark background color scheme (dark grays/blacks) with light text and appropriate contrast throughout.'
+    ? '\nDARK MODE: Use a dark background color scheme (dark grays/blacks for backgrounds, light text, vibrant accent colors) with strong contrast ratio (≥4.5:1) throughout the entire page.'
     : ''
 
-  const base = [
-    'The output must be one complete HTML document with all CSS embedded inline.',
-    'Render the visible page directly. Do not output a React/Vue/Svelte app shell, root div placeholder, or framework-dependent code.',
-    'Do not rely on external JavaScript to populate the page after load.',
-    'Do not use canvas, WebGL, or script-driven chart libraries for the main experience. Use static HTML, CSS, and inline SVG for any charts.',
-    lang,
-    darkInstruction,
-  ].filter(Boolean).join('\n')
+  const base = [HTML_SAFETY_RULES, lang, darkInstruction].filter(Boolean).join('\n')
 
   switch (brief.pageType) {
     case 'app':
@@ -356,95 +362,154 @@ export function buildPromptForType(brief: BriefFormState, direction: DirectionPr
 function buildLandingPrompt(brief: BriefFormState, direction: DirectionPreset, pageContext: string, base: string): string {
   const sections = brief.sections.split(',').map(s => s.trim()).filter(Boolean).join(', ')
   return [
-    'Create a complete production-style single-page HTML experience.',
+    'Create a complete, production-quality single-page marketing website.',
     pageContext ? `\nMulti-page project context:\n${pageContext}\n` : '',
     `Product or brand: ${brief.product || 'A modern digital product'}.`,
     `Target audience: ${brief.audience || 'Prospective customers evaluating the offer'}.`,
     `Primary goal: ${brief.goal || 'Convince visitors and drive the main CTA'}.`,
-    `Required sections: ${sections || 'Hero, trust proof, features, CTA, footer'}.`,
+    `Required sections: ${sections || 'Hero, social proof, features, pricing, CTA, footer'}.`,
     `Visual direction: ${direction.name}. ${direction.prompt}`,
     brief.notes ? `Additional notes: ${brief.notes}` : '',
-    'Make the design responsive, polished, and ready for preview in a browser.',
-    'Ensure the first screen is visibly populated with a heading, supporting copy, and at least one CTA.',
+    '',
+    'QUALITY REQUIREMENTS:',
+    '- Hero section: compelling headline (not generic), subheadline, prominent CTA button, and a visual element (CSS mockup, gradient, or abstract shape).',
+    '- Each section must be fully populated with 3–6 real content items (no placeholders).',
+    '- Typography: use system font stack (Inter, -apple-system, BlinkMacSystemFont, sans-serif). Set clear typographic hierarchy with at least 3 size levels.',
+    '- Color: derive a 3-color palette from the product concept — primary action, neutral background, accent. Apply consistently.',
+    '- Spacing: use generous whitespace (min 64px between sections) and consistent vertical rhythm.',
+    '- Responsive: mobile-first with breakpoints at 768px and 1024px.',
+    '- Footer: include logo, navigation links, copyright, and at least one social/contact link.',
     base,
   ].filter(Boolean).join('\n')
 }
 
 function buildAppPrompt(brief: BriefFormState, direction: DirectionPreset, pageContext: string, base: string): string {
   return [
-    'Create a complete web application UI as a single-page HTML document.',
+    'Create a complete, pixel-perfect web application UI as a single self-contained HTML document.',
     pageContext ? `\nMulti-page project context:\n${pageContext}\n` : '',
-    `Application name: ${brief.product || 'A modern web application'}.`,
-    `User role: ${brief.audience || 'General user'}.`,
-    `Core modules/features to show: ${brief.sections || 'Dashboard, navigation, content area'}.`,
-    `Main functionality: ${brief.goal || 'Manage and display data'}.`,
+    `Application name: ${brief.product || 'Pulse Dashboard'}.`,
+    `User role: ${brief.audience || 'Admin / Operations user'}.`,
+    `Core modules to show: ${brief.sections || 'Dashboard overview, data table, navigation, settings panel'}.`,
+    `Main functionality: ${brief.goal || 'Monitor and manage data, view analytics'}.`,
     `UI style: ${direction.name}. ${direction.prompt}`,
     brief.notes ? `Notes: ${brief.notes}` : '',
-    'Use realistic mock data — fill tables, cards, and stats with plausible numbers and labels.',
-    'Make the layout fully functional in appearance with proper navigation, breadcrumbs, and action buttons.',
+    '',
+    'LAYOUT ARCHITECTURE (mandatory CSS structure):',
+    '- Root layout: `display: flex; height: 100vh; overflow: hidden` on <body> or a wrapper div.',
+    '- Sidebar: `<aside>` with `width: 240px; flex-shrink: 0; height: 100vh; overflow-y: auto`. Contains logo, nav links with icons (use Unicode symbols ◉ ◈ ▦ ⚙ or similar), and user profile.',
+    '- Main area: `<main>` with `flex: 1; overflow-y: auto`. Contains top bar + content.',
+    '- Top bar: `<header>` inside main, `display: flex; align-items: center; justify-content: space-between; padding: 16px 24px`.',
+    '- Content area: padded container with the primary dashboard content below the top bar.',
+    '',
+    'CONTENT REQUIREMENTS:',
+    '- Stat cards: at least 4 metric cards with a label, large number, trend indicator (+/-%), and small sparkline (use SVG path).',
+    '- Data table: at least 6 rows of plausible mock data with column headers, status badges (colored spans), and action buttons.',
+    '- Charts: at least one chart as a pure CSS bar chart or inline SVG path. Label axes clearly.',
+    '- Navigation: 5–7 sidebar links with active state highlighted. Use semantic <nav><ul><li><a> structure.',
+    '- All mock data must be realistic and specific to the app described (not generic "Item 1", "User 1").',
     base,
   ].filter(Boolean).join('\n')
 }
 
 function buildEmailPrompt(brief: BriefFormState, direction: DirectionPreset, base: string): string {
   return [
-    'Create a complete HTML email template.',
-    'IMPORTANT: Use table-based layout for email client compatibility. All CSS must be inline on each element.',
-    'Use email-safe fonts: Arial, Georgia, Helvetica, or system fonts only.',
-    'Max width 600px, centered. Include a text version fallback in comments.',
-    `Brand/sender: ${brief.product || 'A modern brand'}.`,
-    `Email subject/purpose: ${brief.goal || 'A compelling email campaign'}.`,
-    `Recipient: ${brief.audience || 'Subscribers'}.`,
-    `CTA button text: ${brief.sections || 'Learn more'}.`,
+    'Create a complete, production-ready HTML email template.',
+    '',
+    'EMAIL-SPECIFIC REQUIREMENTS:',
+    '- Use table-based layout ONLY for compatibility with Outlook, Gmail, and Apple Mail.',
+    '- Every style MUST be inline on each element (no <style> block — email clients strip them).',
+    '- Max content width: 600px, centered in a full-width wrapper table.',
+    '- Fonts: Arial, Georgia, Helvetica, Verdana, or Times New Roman only.',
+    '- Avoid: CSS Grid, Flexbox, CSS variables, :hover, @media queries (use inline width instead).',
+    '- All images must be represented as colored table cells with text, not <img> tags.',
+    '',
+    `Brand / sender: ${brief.product || 'Nova Brand'}.`,
+    `Email purpose / subject: ${brief.goal || 'Monthly product update'}.`,
+    `Recipient audience: ${brief.audience || 'Active subscribers'}.`,
+    `Primary CTA button text: ${brief.sections || 'View Now'}.`,
     `Email style: ${direction.name}. ${direction.prompt}`,
     brief.notes ? `Notes: ${brief.notes}` : '',
-    'Include: logo area (text-based placeholder), main content, CTA button, footer with unsubscribe link.',
+    '',
+    'STRUCTURE (in order):',
+    '1. Header table: logo text + brand color background.',
+    '2. Hero section: headline, 2–3 sentence body copy.',
+    '3. Content sections (2–3 blocks): text + image placeholder cells side by side.',
+    '4. CTA button: centered, prominent, rounded rectangle.',
+    '5. Footer: brand name, address placeholder, unsubscribe link, copyright.',
     base,
   ].filter(Boolean).join('\n')
 }
 
 function buildEcommercePrompt(brief: BriefFormState, direction: DirectionPreset, pageContext: string, base: string): string {
   return [
-    'Create a complete e-commerce page as a single HTML document.',
+    'Create a complete, polished e-commerce page as a single self-contained HTML document.',
     pageContext ? `\nMulti-page project context:\n${pageContext}\n` : '',
-    `Product / brand: ${brief.product || 'A premium product'}.`,
+    `Product / brand: ${brief.product || 'Premium wireless headphones'}.`,
     `Target buyer: ${brief.audience || 'Online shoppers'}.`,
-    `Price point and key selling points: ${brief.goal || 'Competitive price with great value'}.`,
-    `Key sections to include: ${brief.sections || 'Product images, description, add to cart, reviews'}.`,
+    `Price point and key selling propositions: ${brief.goal || '$149 — 40hr battery, active noise cancelling'}.`,
+    `Required sections: ${brief.sections || 'Product gallery, description, specifications, add to cart, reviews'}.`,
     `Style direction: ${direction.name}. ${direction.prompt}`,
     brief.notes ? `Notes: ${brief.notes}` : '',
-    'Use realistic product images as CSS gradient placeholders. Fill in convincing product copy, specs, and reviews.',
-    'Make buy buttons and interaction elements clearly visible and well-styled.',
+    '',
+    'QUALITY REQUIREMENTS:',
+    '- Product gallery: 3–4 image thumbnails as CSS gradient boxes (different colors/angles), with a large "active" main image.',
+    '- Variant selector: color swatches (real colored circles) and/or size selector with toggle states.',
+    '- Add to cart: prominent button with stock indicator ("In Stock"), quantity selector.',
+    '- Specifications: structured table or grid with 6–8 real spec rows.',
+    '- Reviews: 3 customer reviews with star ratings (★★★★★), reviewer name, date, and body text.',
+    '- Trust badges: secure checkout icon, free returns, warranty text near the buy button.',
+    '- Related products: 3–4 product cards in a horizontal row at the bottom.',
     base,
   ].filter(Boolean).join('\n')
 }
 
 function buildPortfolioPrompt(brief: BriefFormState, direction: DirectionPreset, pageContext: string, base: string): string {
   return [
-    'Create a complete personal portfolio or agency website as a single HTML document.',
+    'Create a complete, impressive personal portfolio or agency website as a single self-contained HTML document.',
     pageContext ? `\nMulti-page project context:\n${pageContext}\n` : '',
-    `Name / brand: ${brief.product || 'A creative professional'}.`,
-    `Role / field: ${brief.audience || 'Designer & Developer'}.`,
-    `Skills and featured projects: ${brief.sections || 'Key skills, 3 featured projects'}.`,
-    `Personal statement / positioning: ${brief.goal || 'Creating great digital experiences'}.`,
+    `Name / brand: ${brief.product || 'Alex Chen'}.`,
+    `Role / field: ${brief.audience || 'UI/UX Designer & Developer'}.`,
+    `Skills and featured projects: ${brief.sections || 'React, Figma, Node.js — 3 featured case study projects'}.`,
+    `Personal statement / positioning: ${brief.goal || 'I craft digital experiences that users love'}.`,
     `Visual style: ${direction.name}. ${direction.prompt}`,
     brief.notes ? `Notes: ${brief.notes}` : '',
-    'Use placeholder images as CSS gradients for project thumbnails. Make the work section the focal point.',
+    '',
+    'QUALITY REQUIREMENTS:',
+    '- Hero: full-viewport with name, title, personal statement, CTA buttons (View Work, Contact), and visual element.',
+    '- About: 2–3 paragraph bio with a personality, skill badges (real technologies/tools), and years of experience.',
+    '- Projects: 3 featured project cards with title, description, tech stack tags, gradient thumbnail, and "View Case Study" link.',
+    '- Skills: grouped tags or grid showing tools, languages, and soft skills.',
+    '- Experience/Timeline: 2–3 past roles with company, dates, and 2-line description.',
+    '- Contact: email link, social links (GitHub, LinkedIn, Dribbble), and a simple contact form.',
+    '- Use CSS gradient backgrounds for project thumbnails — varied colors, not all the same.',
     base,
   ].filter(Boolean).join('\n')
 }
 
 function buildComponentPrompt(brief: BriefFormState, direction: DirectionPreset, base: string): string {
   return [
-    'Create a complete UI component showcase page as a single HTML document.',
-    `Component set / design system: ${brief.product || 'A modern UI component library'}.`,
+    'Create a complete UI component showcase/storybook page as a single self-contained HTML document.',
+    `Component set / design system: ${brief.product || 'Modern UI Component Library'}.`,
     `Use case / context: ${brief.goal || 'General web application'}.`,
-    `States to demonstrate: ${brief.sections || 'default, hover, active, disabled, loading'}.`,
-    `Design style / inspiration: ${brief.audience || 'Clean, modern design system'}.`,
+    `States to demonstrate: ${brief.sections || 'default, hover, active, focus, disabled, loading, error'}.`,
+    `Design style / inspiration: ${brief.audience || 'Clean, accessible design system'}.`,
     `Component style: ${direction.name}. ${direction.prompt}`,
     brief.notes ? `Notes: ${brief.notes}` : '',
-    'Organize components in labeled sections with clear headings.',
-    'Show multiple variants and states side by side. Use a neutral background for the showcase.',
+    '',
+    'STRUCTURE: Use a two-column layout (sidebar index + content) or a single-column with clear section dividers.',
+    'For each component section:',
+    '- Section header: component name + brief description.',
+    '- Component row: show all variants/states side by side with small labels underneath.',
+    '- Use :hover and :focus CSS to show interactive states (no JS needed).',
+    '',
+    'REQUIRED COMPONENT SECTIONS (adapt to the requested components):',
+    '- Buttons: primary, secondary, ghost, danger, disabled, loading (with spinner), icon button, icon+text.',
+    '- Form inputs: text (default, focus, error, disabled), textarea, checkbox, radio, toggle switch, select.',
+    '- Cards: basic, with image, with actions, interactive hover state.',
+    '- Badges / Chips: success, warning, error, info, neutral — all with appropriate colors.',
+    '- Navigation: top bar + sidebar item (default, active, hover states).',
+    '- Alerts / Toasts: success, warning, error, info variants.',
+    '- Data: stat card, table row (default, selected, hover), progress bar, avatar.',
     base,
   ].filter(Boolean).join('\n')
 }
@@ -457,17 +522,357 @@ export function buildTweakPromptForType(
 ): string {
   const typeLabel = PAGE_TYPE_CONFIGS(false).find(c => c.id === brief.pageType)?.labelEn || 'page'
   return [
-    `You are revising an existing ${typeLabel} HTML artifact.`,
-    `Brief context: product/name=${brief.product || 'unspecified'}, goal=${brief.goal || 'unspecified'}.`,
-    `Keep aligned with visual direction: ${direction.name}. ${direction.prompt}`,
-    `Tweak goal: ${tweak.instruction}`,
-    'Return a full improved HTML document, not notes.',
-    'Keep it fully static and directly previewable: no React/Vue/Svelte shells, no external JS required.',
-    'Avoid canvas- or library-driven rendering. If charts are needed, draw them with static HTML/CSS/SVG only.',
-    'Current HTML artifact:',
+    `You are revising an existing ${typeLabel} HTML artifact. Return only the complete improved HTML document.`,
+    `Brief context: product/name="${brief.product || 'unspecified'}", goal="${brief.goal || 'unspecified'}".`,
+    `Maintain visual direction: ${direction.name}. ${direction.prompt}`,
+    `Improvement goal: ${tweak.instruction}`,
+    '',
+    'OUTPUT RULES:',
+    '- Return a complete, self-contained HTML document. No explanations, no markdown code fences.',
+    '- Keep all existing content — only change styling, layout, or copy as directed by the improvement goal.',
+    '- Every HTML element must use proper tag names. Never output HTML attribute syntax as visible text.',
+    '- No React/Vue/Svelte/framework syntax. No external JavaScript libraries.',
+    '- Charts and data visualizations must use CSS or inline SVG only.',
+    '',
+    'CURRENT HTML:',
     html,
   ].join('\n')
 }
+
+// ── Template library ─────────────────────────────────────────────────────────
+
+export interface PageTemplate {
+  id: string
+  pageType: PageType
+  name: string
+  nameEn: string
+  description: string
+  descriptionEn: string
+  gradient: string
+  directionId: string
+  brief: {
+    product: string
+    audience: string
+    goal: string
+    sections: string
+    notes: string
+  }
+}
+
+export const PAGE_TEMPLATES: PageTemplate[] = [
+  // ── Landing pages ──────────────────────────────────────────────────────────
+  {
+    id: 'landing-saas',
+    pageType: 'landing',
+    name: 'SaaS 产品官网',
+    nameEn: 'SaaS Product Site',
+    description: '清晰的功能展示、价格表、用户证言',
+    descriptionEn: 'Features, pricing table, social proof',
+    gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    directionId: 'saas-conversion',
+    brief: {
+      product: 'Pulse Analytics — AI 驱动的用户行为分析平台',
+      audience: '中小型 SaaS 公司的产品经理和增长团队',
+      goal: '免费试用注册，推动演示预约',
+      sections: 'Hero, 核心功能, 产品截图, 用户评价, 定价方案, FAQ, CTA',
+      notes: '专业、值得信赖、数据驱动的语气。强调"无需代码"和"5 分钟上手"。',
+    },
+  },
+  {
+    id: 'landing-agency',
+    pageType: 'landing',
+    name: '创意机构官网',
+    nameEn: 'Creative Agency Site',
+    description: '震撼视觉、作品展示、服务介绍',
+    descriptionEn: 'Bold visuals, case studies, services',
+    gradient: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+    directionId: 'editorial-premium',
+    brief: {
+      product: 'Studio Prism — 品牌设计与数字体验工作室',
+      audience: '寻找创意合作伙伴的 B 端企业和品牌方',
+      goal: '展示工作室实力，吸引项目咨询',
+      sections: 'Hero, 服务项目, 精选案例, 团队介绍, 客户评价, 联系方式',
+      notes: '大胆、创意、高端的视觉风格。以作品说话，减少文字。',
+    },
+  },
+  {
+    id: 'landing-ai-tool',
+    pageType: 'landing',
+    name: 'AI 工具发布页',
+    nameEn: 'AI Tool Launch Page',
+    description: '等待名单收集、功能预告、早鸟优惠',
+    descriptionEn: 'Waitlist, feature preview, early bird offer',
+    gradient: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+    directionId: 'bold-campaign',
+    brief: {
+      product: 'Nova Copilot — 自动化内容创作的 AI 写作助手',
+      audience: '内容创作者、营销人员、独立创业者',
+      goal: '收集等待名单邮箱，传达早鸟优惠',
+      sections: 'Hero + 等待名单表单, 核心功能展示, 使用场景, 早鸟福利, 常见问题',
+      notes: '兴奋感、紧迫感。强调"早鸟独家"和"限时"。使用未来感视觉元素。',
+    },
+  },
+  // ── App / Dashboard ────────────────────────────────────────────────────────
+  {
+    id: 'app-analytics',
+    pageType: 'app',
+    name: '数据分析仪表板',
+    nameEn: 'Analytics Dashboard',
+    description: '多维度指标卡、折线图、用户数据表',
+    descriptionEn: 'KPI cards, charts, user data table',
+    gradient: 'linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%)',
+    directionId: 'app-dashboard',
+    brief: {
+      product: 'DataFlow Analytics',
+      audience: '产品经理、数据分析师',
+      goal: '展示用户增长、转化率、收入等核心业务指标',
+      sections: '侧边导航, 顶部筛选栏, 关键指标卡(DAU/MAU/收入/转化率), 折线趋势图, 用户来源饼图, 最近用户列表',
+      notes: '深色主题，专业商务风格，数据要具体真实（如 DAU: 24,381）',
+    },
+  },
+  {
+    id: 'app-saas-admin',
+    pageType: 'app',
+    name: 'SaaS 管理后台',
+    nameEn: 'SaaS Admin Panel',
+    description: '用户管理、订阅状态、操作工具栏',
+    descriptionEn: 'User list, subscription status, action toolbar',
+    gradient: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+    directionId: 'app-admin',
+    brief: {
+      product: 'CloudOps Admin',
+      audience: '系统管理员、客户成功团队',
+      goal: '管理用户账号、查看订阅状态、处理支持请求',
+      sections: '侧边导航, 用户管理表格(姓名/邮箱/套餐/状态/操作), 筛选搜索, 状态徽章, 批量操作工具栏',
+      notes: '暗色侧边栏，白色主内容区，使用真实用户数据示例',
+    },
+  },
+  {
+    id: 'app-mobile-ui',
+    pageType: 'app',
+    name: '移动端 App 界面',
+    nameEn: 'Mobile App Screen',
+    description: '底部 Tab 导航、Feed 卡片流、健康数据',
+    descriptionEn: 'Bottom tab nav, card feed, health stats',
+    gradient: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
+    directionId: 'app-mobile',
+    brief: {
+      product: 'FitTrack — 健身与健康追踪 App',
+      audience: '健身爱好者，关注健康的年轻用户',
+      goal: '展示今日运动数据、训练计划、卡路里统计',
+      sections: '顶部用户问候, 今日概览卡片(步数/卡路里/运动时长), 训练推荐列表, 周趋势迷你图, 底部 Tab 栏',
+      notes: '最大宽度390px居中，iOS原生风格，使用真实数字（如：今日步数 8,432）',
+    },
+  },
+  // ── Email templates ────────────────────────────────────────────────────────
+  {
+    id: 'email-product-update',
+    pageType: 'email',
+    name: '产品更新通讯',
+    nameEn: 'Product Newsletter',
+    description: '每月更新、新功能介绍、资源链接',
+    descriptionEn: 'Monthly update, new features, resource links',
+    gradient: 'linear-gradient(135deg, #f7971e 0%, #ffd200 100%)',
+    directionId: 'email-newsletter',
+    brief: {
+      product: 'Pulse Analytics Team',
+      goal: '四月产品更新：新增 AI 报告生成功能',
+      audience: '付费用户和试用用户',
+      sections: '立即查看新功能',
+      notes: '友好专业的语气，突出 3 个核心新功能，附上文档链接和支持联系',
+    },
+  },
+  {
+    id: 'email-welcome',
+    pageType: 'email',
+    name: '新用户欢迎邮件',
+    nameEn: 'Welcome Email',
+    description: '欢迎引导、3步上手、帮助资源',
+    descriptionEn: '3-step onboarding, help resources',
+    gradient: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
+    directionId: 'email-onboarding',
+    brief: {
+      product: 'Pulse Analytics',
+      goal: '欢迎新注册用户，引导完成首次数据接入',
+      audience: '刚刚注册的新用户',
+      sections: '开始接入数据',
+      notes: '热情、有帮助的语气。简短3步上手指南。附上视频教程和帮助中心链接。',
+    },
+  },
+  {
+    id: 'email-promo',
+    pageType: 'email',
+    name: '限时促销邮件',
+    nameEn: 'Flash Sale Email',
+    description: '限时折扣、紧迫感设计、突出 CTA',
+    descriptionEn: 'Time-limited offer, urgency, prominent CTA',
+    gradient: 'linear-gradient(135deg, #f953c6 0%, #b91d73 100%)',
+    directionId: 'email-promo',
+    brief: {
+      product: 'Nova Premium 年度会员',
+      goal: '双十一限时 5 折优惠，仅剩48小时',
+      audience: '免费版用户和已过期付费用户',
+      sections: '立即升级，享受 5 折',
+      notes: '紧迫感强烈，倒计时感。突出省了多少钱。3个付费版核心特权。',
+    },
+  },
+  // ── E-commerce ─────────────────────────────────────────────────────────────
+  {
+    id: 'ec-premium-product',
+    pageType: 'ecommerce',
+    name: '高端耳机商品页',
+    nameEn: 'Premium Headphones Page',
+    description: '图片展示、参数规格、加购 + 评价',
+    descriptionEn: 'Gallery, specs, add-to-cart, reviews',
+    gradient: 'linear-gradient(135deg, #2d3436 0%, #636e72 100%)',
+    directionId: 'ec-product',
+    brief: {
+      product: 'Sony WH-1000XM5 — 旗舰主动降噪耳机',
+      audience: '追求音质的音乐爱好者和商务人士',
+      goal: '¥2,499，行业顶级主动降噪，30小时续航，LDAC高解析音频',
+      sections: '图片展示区, 规格参数, 颜色选择, 加购按钮, 用户评价, 推荐配件',
+      notes: '高端商务风格，突出"顶级降噪"和"专业音质"。评价要真实具体。',
+    },
+  },
+  {
+    id: 'ec-fashion-store',
+    pageType: 'ecommerce',
+    name: '时尚品牌店铺',
+    nameEn: 'Fashion Brand Store',
+    description: 'Hero Banner、新品上市、分类浏览',
+    descriptionEn: 'Hero banner, new arrivals, category browsing',
+    gradient: 'linear-gradient(135deg, #1a1a1a 0%, #4a4a4a 100%)',
+    directionId: 'ec-store',
+    brief: {
+      product: 'MOSS — 极简主义都市时尚品牌',
+      audience: '18-35岁都市白领，追求品质生活',
+      goal: '展示新季系列，引导浏览和购买',
+      sections: 'Hero Banner(新季上市), 精选单品网格, 品牌故事, 分类导航, 热卖榜单',
+      notes: '极简主义黑白灰配色，大图留白。高端but不奢侈的定位。',
+    },
+  },
+  {
+    id: 'ec-tech-category',
+    pageType: 'ecommerce',
+    name: '科技产品分类页',
+    nameEn: 'Tech Category Page',
+    description: '筛选器、产品卡片网格、价格排序',
+    descriptionEn: 'Filters, product grid, price sorting',
+    gradient: 'linear-gradient(135deg, #3a7bd5 0%, #00d2ff 100%)',
+    directionId: 'ec-listing',
+    brief: {
+      product: '智能手表分类 — TechMall',
+      audience: '比价购物的消费者，科技爱好者',
+      goal: '展示20+款智能手表，支持按价格/评分筛选',
+      sections: '左侧筛选(品牌/价格/评分/功能), 产品卡片网格(12个商品), 排序控件, 分页',
+      notes: '产品卡需包含价格、评分、徽章（新品/热卖/折扣）。使用渐变色作为产品图占位。',
+    },
+  },
+  // ── Portfolio ──────────────────────────────────────────────────────────────
+  {
+    id: 'port-ux-designer',
+    pageType: 'portfolio',
+    name: 'UI/UX 设计师',
+    nameEn: 'UI/UX Designer Portfolio',
+    description: '作品案例、设计过程、技能展示',
+    descriptionEn: 'Case studies, design process, skills',
+    gradient: 'linear-gradient(135deg, #f6d365 0%, #fda085 100%)',
+    directionId: 'port-creative',
+    brief: {
+      product: 'Sarah Kim Design',
+      audience: 'UI/UX 设计师，专注于 SaaS 产品体验设计',
+      sections: 'Figma, Principle, Framer, 用研方法；3个完整案例研究',
+      goal: '帮助 B 端 SaaS 产品提升用户体验和产品转化',
+      notes: '暖色系，作品为主。每个案例要有前后对比、数据成果（如转化率提升23%）',
+    },
+  },
+  {
+    id: 'port-developer',
+    pageType: 'portfolio',
+    name: '全栈工程师',
+    nameEn: 'Fullstack Developer',
+    description: '技术栈、GitHub 项目、工作经历',
+    descriptionEn: 'Tech stack, GitHub projects, work history',
+    gradient: 'linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%)',
+    directionId: 'port-developer',
+    brief: {
+      product: 'Alex Chen — 全栈工程师',
+      audience: '全栈工程师，5年经验，专注 React + Node.js + 云架构',
+      sections: 'TypeScript, React, Node.js, PostgreSQL, AWS；4个开源项目',
+      goal: '构建高性能 Web 应用，帮助团队快速落地产品',
+      notes: '深色代码主题风格，展示 GitHub 贡献图（CSS 模拟）。项目要有真实 star 数和描述。',
+    },
+  },
+  {
+    id: 'port-agency',
+    pageType: 'portfolio',
+    name: '创意工作室',
+    nameEn: 'Creative Studio',
+    description: '服务介绍、团队风采、案例展示',
+    descriptionEn: 'Services, team, case studies',
+    gradient: 'linear-gradient(135deg, #e96c24 0%, #fac02e 100%)',
+    directionId: 'port-agency',
+    brief: {
+      product: 'Craft Studio',
+      audience: '品牌设计 + 数字营销工作室，8人团队',
+      sections: 'React, Webflow, Figma；5个品牌重塑案例；服务：VI设计/官网/增长',
+      goal: '为初创公司和中型品牌提供完整的品牌与数字营销解决方案',
+      notes: '充满活力的橙色系，展示团队合影占位和客户LOGO墙（知名品牌）',
+    },
+  },
+  // ── UI Components ──────────────────────────────────────────────────────────
+  {
+    id: 'comp-design-system',
+    pageType: 'component',
+    name: '基础组件库',
+    nameEn: 'Core Component Library',
+    description: '按钮、表单、卡片、徽章全套展示',
+    descriptionEn: 'Buttons, forms, cards, badges showcase',
+    gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    directionId: 'comp-ui-kit',
+    brief: {
+      product: 'Nova UI — 现代化 React 组件库',
+      goal: 'SaaS 后台管理系统，面向企业用户',
+      sections: 'default, hover, active, focus, disabled, loading, error, success',
+      audience: 'Clean & Functional，参考 Ant Design Pro 风格',
+      notes: '蓝紫色主色调。展示浅色和深色两种模式的对比。每个组件要有代码片段注释。',
+    },
+  },
+  {
+    id: 'comp-data-display',
+    pageType: 'component',
+    name: '数据展示组件',
+    nameEn: 'Data Display Components',
+    description: '统计卡、表格、图表、进度条',
+    descriptionEn: 'Stat cards, tables, charts, progress bars',
+    gradient: 'linear-gradient(135deg, #0f2027 0%, #2c5364 100%)',
+    directionId: 'comp-data',
+    brief: {
+      product: 'DataViz Component Set',
+      goal: '数据分析仪表板，展示业务指标',
+      sections: 'default, loading, empty-state, error-state, with-actions',
+      audience: 'Professional Dark Theme，参考 Grafana/Datadog',
+      notes: '深色背景，数据要真实（如：¥128,432.00 MRR，同比+23.4%）。包含迷你折线图SVG。',
+    },
+  },
+  {
+    id: 'comp-form-kit',
+    pageType: 'component',
+    name: '表单控件集',
+    nameEn: 'Form & Input Kit',
+    description: '输入框、选择器、校验状态全套',
+    descriptionEn: 'Inputs, selects, validation states',
+    gradient: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
+    directionId: 'comp-form',
+    brief: {
+      product: 'Form Controls Library',
+      goal: '用户信息录入、数据筛选场景',
+      sections: 'default, focus, filled, error, disabled, readonly, loading',
+      audience: 'Minimal & Accessible，参考 Linear/Notion 风格',
+      notes: '绿色强调色。展示一个完整的"新建项目"表单作为综合示例。包含表单校验错误状态。',
+    },
+  },
+]
 
 // ── Language support ──────────────────────────────────────────────────────────
 

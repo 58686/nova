@@ -7,7 +7,9 @@ import {
   buildTweakPromptForType,
   DirectionPreset,
   OUTPUT_LANGUAGES,
+  PAGE_TEMPLATES,
   PAGE_TYPE_CONFIGS,
+  PageTemplate,
   QuickTweak,
 } from '../services/pageTypes'
 import { useAIConfigStore } from '../stores/aiConfigStore'
@@ -63,47 +65,10 @@ function buildProjectName(brief: BriefFormState, locale: Locale) {
 }
 
 function buildStructuredPrompt(brief: BriefFormState, direction: DirectionPreset, pageContext = '') {
-  const sections = brief.sections
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .join(', ')
-
-  return [
-    'Create a complete production-style single-page HTML experience.',
-    pageContext ? `\nMulti-page project context:\n${pageContext}\n` : '',
-    `Product or brand: ${brief.product || 'A modern digital product'}.`,
-    `Target audience: ${brief.audience || 'Prospective customers evaluating the offer'}.`,
-    `Primary goal: ${brief.goal || 'Convince visitors and drive the main CTA'}.`,
-    `Required sections: ${sections || 'Hero, trust proof, features, CTA, footer'}.`,
-    `Visual direction preset: ${direction.name}. ${direction.prompt}`,
-    brief.notes ? `Additional notes: ${brief.notes}` : '',
-    'The output must be one complete HTML document with embedded CSS and realistic copy.',
-    'Render the visible page directly with semantic HTML and inline CSS. Do not output a React/Vue/Svelte app shell, a root div placeholder, or framework-dependent code.',
-    'Do not rely on external JavaScript to populate the page after load. Tiny vanilla JS is acceptable only for minor UI interactions.',
-    'Do not use canvas, WebGL, Three.js, ECharts, Chart.js, D3, GSAP timelines, or any script-driven rendering for the main experience.',
-    'If the design needs charts or dashboards, mock them with static HTML, CSS, and inline SVG so the preview is fully visible without scripts.',
-    'Ensure the first screen is visibly populated with a heading, supporting copy, and at least one CTA using strong text contrast.',
-    'Make the design responsive, polished, and ready for preview in a browser.',
-  ]
-    .filter(Boolean)
-    .join('\n')
+  // Falls back to the landing page prompt builder which includes all safety rules
+  return buildPromptForType({ ...brief, pageType: brief.pageType || 'landing' }, direction, pageContext)
 }
 
-function buildTweakPrompt(brief: BriefFormState, direction: DirectionPreset, tweak: QuickTweak, html: string) {
-  return [
-    'You are revising an existing landing page HTML artifact.',
-    `Original brief context: product=${brief.product || 'unspecified'}, audience=${brief.audience || 'unspecified'}, goal=${brief.goal || 'unspecified'}.`,
-    `Keep the chosen visual direction aligned with ${direction.name}. ${direction.prompt}`,
-    `Tweak goal: ${tweak.instruction}`,
-    'Return a full improved HTML document, not notes.',
-    'Keep it fully static and directly previewable: no React/Vue/Svelte shells, no root placeholder, and no external JS required to reveal content.',
-    'Avoid canvas- or library-driven rendering. If charts are needed, draw them with static HTML, CSS, and inline SVG only.',
-    'Preserve the page purpose while improving layout, copy hierarchy, and visuals.',
-    'Current HTML artifact:',
-    html,
-  ].join('\n')
-}
 
 type LinkedPageInfo = { path: string; linkText: string }
 
@@ -346,6 +311,8 @@ export default function ChatPanel() {
   const hasContent = generatedCode.trim().length > 0
 
   const [briefOpen, setBriefOpen] = useState(!hasContent)
+  const [showTemplates, setShowTemplates] = useState(false)
+  const [templateFilter, setTemplateFilter] = useState<string>('all')
 
   const prevHasContent = useRef(hasContent)
   useEffect(() => {
@@ -592,6 +559,29 @@ export default function ChatPanel() {
     await runGeneration(prompt, text(`微调：${tweak.label}`, `Tweak: ${tweak.label}`), description)
   }
 
+  const handleApplyTemplate = async (tpl: PageTemplate) => {
+    const typeConfigs = PAGE_TYPE_CONFIGS(isZh)
+    const typeConfig = typeConfigs.find(c => c.id === tpl.pageType) || typeConfigs[0]
+    const direction = typeConfig.directions.find(d => d.id === tpl.directionId) || typeConfig.directions[0]
+    const newBrief: BriefFormState = {
+      ...briefForm,
+      pageType: tpl.pageType,
+      directionId: direction.id,
+      product: tpl.brief.product,
+      audience: tpl.brief.audience,
+      goal: tpl.brief.goal,
+      sections: tpl.brief.sections,
+      notes: tpl.brief.notes,
+    }
+    setBriefForm(newBrief)
+    setShowTemplates(false)
+    setBriefOpen(true)
+    const pageContext = buildPageContext(projectPages, currentPageId)
+    const prompt = buildPromptForType(newBrief, direction, pageContext)
+    const label = isZh ? tpl.name : tpl.nameEn
+    await runGeneration(prompt, label, label)
+  }
+
   const [chatInput, setChatInput] = useState('')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [pendingGenContext, setPendingGenContext] = useState<string | null>(null)
@@ -676,10 +666,11 @@ export default function ChatPanel() {
       setPendingGenContext(null)
       if (generatedCode.trim()) {
         const prompt = [
-          `Revise the landing page HTML based on: "${fullContext}"`,
+          `Revise the HTML page based on: "${fullContext}"`,
           `Visual direction: ${selectedDirection.name}. ${selectedDirection.prompt}`,
-          'Return the complete improved HTML document. Keep it fully static.',
-          'Current HTML:', generatedCode.slice(0, 12000),
+          'Return the complete improved HTML document. Keep it fully static, no framework syntax, no external JS.',
+          'Every HTML element must use a proper tag name — never output attribute syntax as visible text.',
+          'CURRENT HTML:', generatedCode.slice(0, 12000),
         ].join('\n')
         await runGeneration(prompt, instruction, instruction, undefined, true)
       } else {
@@ -732,10 +723,12 @@ export default function ChatPanel() {
 
     // Modify existing page
     const prompt = [
-      `Revise the landing page HTML based on this instruction: "${instruction}"`,
+      `Revise the HTML page based on this instruction: "${instruction}"`,
       `Visual direction: ${selectedDirection.name}. ${selectedDirection.prompt}`,
-      'Return the complete improved HTML document. Keep it fully static, no React/Vue/Svelte, no external JS required.',
-      'Current HTML (revise this):',
+      'Return the complete improved HTML document.',
+      'RULES: fully static HTML, no React/Vue/Svelte, no external JS or CDN scripts, no template variables.',
+      'Every HTML element must use a proper tag name — never output HTML attribute syntax as visible text content.',
+      'CURRENT HTML (revise this):',
       generatedCode.slice(0, 12000),
     ].join('\n')
     await runGeneration(prompt, instruction, instruction, undefined, true)
@@ -764,7 +757,7 @@ export default function ChatPanel() {
   }
 
   return (
-    <section className="shell-panel flex min-w-0 w-[340px] xl:w-[360px] 2xl:w-[370px] shrink-0 flex-col overflow-hidden rounded-[28px]">
+    <section className="shell-panel relative flex min-w-0 w-[340px] xl:w-[360px] 2xl:w-[370px] shrink-0 flex-col overflow-hidden rounded-[28px]">
       {/* ── Header ─────────────────────────────────────────── */}
       <div className="border-b px-5 py-3 shrink-0" style={{ borderColor: 'var(--border-subtle)' }}>
         <div className="flex items-center justify-between gap-3">
@@ -841,9 +834,17 @@ export default function ChatPanel() {
             {briefOpen && (
               <div className="px-4 pb-4 space-y-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
                 <div className="flex items-center justify-between pt-3">
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    {text('填写后点击生成', 'Fill in and generate')}
-                  </span>
+                  <button
+                    className="rounded-full px-3 py-1 text-xs flex items-center gap-1.5 transition-colors"
+                    style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}
+                    onClick={() => setShowTemplates(true)}
+                    type="button"
+                  >
+                    <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                    </svg>
+                    {text('模板库', 'Templates')}
+                  </button>
                   <button
                     className="rounded-full px-3 py-1 text-xs"
                     style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}
@@ -1232,6 +1233,94 @@ export default function ChatPanel() {
           </div>
         </div>
       </div>
+
+      {/* ── Template Library Overlay ────────────────────────── */}
+      {showTemplates && (
+        <div
+          className="absolute inset-0 z-50 flex flex-col rounded-[28px] overflow-hidden"
+          style={{ background: 'var(--bg-surface)' }}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-3 border-b shrink-0" style={{ borderColor: 'var(--border-subtle)' }}>
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>{text('一键起始', 'Quick Start')}</p>
+              <h3 className="text-sm font-semibold mt-0.5" style={{ color: 'var(--text-primary)' }}>{text('模板库', 'Template Library')}</h3>
+            </div>
+            <button
+              className="btn-icon"
+              onClick={() => setShowTemplates(false)}
+              type="button"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Filter tabs */}
+          <div className="flex gap-1 px-4 py-2 shrink-0 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+            {[
+              { id: 'all', label: text('全部', 'All') },
+              { id: 'landing', label: text('落地页', 'Landing') },
+              { id: 'app', label: text('App', 'App') },
+              { id: 'email', label: text('邮件', 'Email') },
+              { id: 'ecommerce', label: text('电商', 'E-com') },
+              { id: 'portfolio', label: text('主页', 'Portfolio') },
+              { id: 'component', label: text('组件', 'Component') },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                className="rounded-full px-3 py-1 text-xs whitespace-nowrap shrink-0 transition-colors"
+                style={{
+                  background: templateFilter === tab.id ? 'var(--accent-primary)' : 'var(--bg-hover)',
+                  color: templateFilter === tab.id ? '#fff' : 'var(--text-secondary)',
+                }}
+                onClick={() => setTemplateFilter(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Template grid */}
+          <div className="flex-1 overflow-y-auto px-4 pb-4">
+            <div className="grid grid-cols-2 gap-2">
+              {PAGE_TEMPLATES
+                .filter(t => templateFilter === 'all' || t.pageType === templateFilter)
+                .map(tpl => (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    className="rounded-[14px] border overflow-hidden text-left transition-all hover:scale-[1.02] active:scale-[0.98]"
+                    style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}
+                    onClick={() => handleApplyTemplate(tpl)}
+                    disabled={isGenerating}
+                  >
+                    {/* Gradient preview */}
+                    <div
+                      className="h-[72px] w-full flex items-center justify-center"
+                      style={{ background: tpl.gradient }}
+                    >
+                      <span className="text-2xl select-none" role="img">
+                        {PAGE_TYPE_CONFIGS(false).find(c => c.id === tpl.pageType)?.icon || '📄'}
+                      </span>
+                    </div>
+                    {/* Info */}
+                    <div className="px-2.5 py-2">
+                      <p className="text-xs font-semibold leading-tight" style={{ color: 'var(--text-primary)' }}>
+                        {isZh ? tpl.name : tpl.nameEn}
+                      </p>
+                      <p className="text-[10px] mt-0.5 leading-tight" style={{ color: 'var(--text-muted)' }}>
+                        {isZh ? tpl.description : tpl.descriptionEn}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }
