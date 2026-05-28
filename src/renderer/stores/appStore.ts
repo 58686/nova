@@ -74,6 +74,8 @@ export interface GenerationTimelineStep {
   status: GenerationStepStatus
 }
 
+export type PageType = 'landing' | 'app' | 'email' | 'ecommerce' | 'portfolio' | 'component'
+
 export interface BriefFormState {
   product: string
   audience: string
@@ -81,6 +83,9 @@ export interface BriefFormState {
   sections: string
   notes: string
   directionId: string
+  pageType: PageType
+  outputLang: string
+  darkMode: boolean
 }
 
 interface AppState {
@@ -190,6 +195,9 @@ export const DEFAULT_BRIEF_FORM: BriefFormState = {
   sections: 'Hero, social proof, features, CTA',
   notes: '',
   directionId: 'editorial-premium',
+  pageType: 'landing',
+  outputLang: 'auto',
+  darkMode: false,
 }
 
 function loadLocaleFromStorage(): Locale {

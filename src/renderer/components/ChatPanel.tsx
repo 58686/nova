@@ -2,6 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../hooks/useLocale'
 import { Locale } from '../locale'
 import { ImageData, RuntimeAIService, supportsVision } from '../services/runtimeAI'
+import {
+  buildPromptForType,
+  buildTweakPromptForType,
+  DirectionPreset,
+  OUTPUT_LANGUAGES,
+  PAGE_TYPE_CONFIGS,
+  QuickTweak,
+} from '../services/pageTypes'
 import { useAIConfigStore } from '../stores/aiConfigStore'
 import {
   BriefFormState,
@@ -11,85 +19,6 @@ import {
   useAppStore,
 } from '../stores/appStore'
 
-type DirectionPreset = {
-  id: string
-  name: string
-  summary: string
-  visualCue: string
-  prompt: string
-}
-
-type QuickTweak = {
-  id: string
-  label: string
-  instruction: string
-}
-
-function getDirectionPresets(locale: Locale): DirectionPreset[] {
-  const isZh = locale === 'zh-CN'
-
-  return [
-    {
-      id: 'editorial-premium',
-      name: isZh ? '高级感' : 'Editorial Premium',
-      summary: isZh ? '留白充足，层次克制，像高端品牌官网。' : 'Airy spacing, refined hierarchy, and a premium brand-site feel.',
-      visualCue: 'Editorial / Premium',
-      prompt:
-        'Use an editorial premium art direction with elegant typography, restrained palette, refined spacing, layered cards, and a polished high-end brand feel.',
-    },
-    {
-      id: 'clean-minimal',
-      name: isZh ? '更简洁' : 'Clean Minimal',
-      summary: isZh ? '信息密度更轻，模块更少，更干净。' : 'Lower information density, fewer motifs, and a cleaner composition.',
-      visualCue: 'Minimal / Clean',
-      prompt:
-        'Keep the composition minimal and calm with fewer visual motifs, cleaner blocks, concise copy, and stronger whitespace discipline.',
-    },
-    {
-      id: 'saas-conversion',
-      name: isZh ? '偏 SaaS' : 'SaaS Product',
-      summary: isZh ? '更像软件官网，强调产品结构与可信度。' : 'Feels more like a software landing page with strong hierarchy and credibility.',
-      visualCue: 'SaaS / Product',
-      prompt:
-        'Shape it like a modern SaaS landing page with strong product hierarchy, proof blocks, feature storytelling, UI-like cards, and operational credibility.',
-    },
-    {
-      id: 'bold-campaign',
-      name: isZh ? '强转化' : 'Campaign Conversion',
-      summary: isZh ? '主视觉更强，CTA 更突出，节奏更抓人。' : 'Bolder hero treatment, clearer CTA pressure, and more campaign energy.',
-      visualCue: 'Campaign / Conversion',
-      prompt:
-        'Push for a campaign-oriented conversion page with a bolder hero, higher contrast CTA moments, persuasive social proof, urgency cues, and denser conversion framing.',
-    },
-  ]
-}
-
-function getQuickTweaks(locale: Locale): QuickTweak[] {
-  const isZh = locale === 'zh-CN'
-
-  return [
-    {
-      id: 'premium',
-      label: isZh ? '更高级' : 'More Premium',
-      instruction: 'Elevate the page to feel more premium, more intentional, and more design-led without hurting readability.',
-    },
-    {
-      id: 'minimal',
-      label: isZh ? '更简洁' : 'More Minimal',
-      instruction: 'Reduce visual noise, simplify the structure, and make the page feel cleaner and more focused.',
-    },
-    {
-      id: 'saas',
-      label: isZh ? '更偏 SaaS' : 'More SaaS',
-      instruction: 'Make the page feel more like a polished SaaS product landing page with clearer product hierarchy and proof modules.',
-    },
-    {
-      id: 'conversion',
-      label: isZh ? '更强转化' : 'More Conversion',
-      instruction: 'Increase conversion intent with sharper messaging, more compelling CTA hierarchy, and stronger persuasion blocks.',
-    },
-  ]
-}
 
 function getTimelineDefinitions(locale: Locale): Omit<GenerationTimelineStep, 'status'>[] {
   const isZh = locale === 'zh-CN'
@@ -400,8 +329,14 @@ export default function ChatPanel() {
   const { activePresetId, presets, getActiveConfig } = useAIConfigStore()
   const { locale, text } = useLocale()
 
-  const directionPresets = useMemo(() => getDirectionPresets(locale), [locale])
-  const quickTweaks = useMemo(() => getQuickTweaks(locale), [locale])
+  const isZh = locale === 'zh-CN'
+  const pageTypeConfigs = useMemo(() => PAGE_TYPE_CONFIGS(isZh), [isZh])
+  const activeTypeConfig = useMemo(
+    () => pageTypeConfigs.find(c => c.id === briefForm.pageType) || pageTypeConfigs[0],
+    [briefForm.pageType, pageTypeConfigs],
+  )
+  const directionPresets = activeTypeConfig.directions
+  const quickTweaks = activeTypeConfig.tweaks
   const timelineDefinitions = useMemo(() => getTimelineDefinitions(locale), [locale])
 
   const selectedDirection = useMemo(
@@ -645,14 +580,14 @@ export default function ChatPanel() {
 
   const handleGenerate = async () => {
     const pageContext = buildPageContext(projectPages, currentPageId)
-    const prompt = buildStructuredPrompt(briefForm, selectedDirection, pageContext)
-    const description = `${selectedDirection.name} / ${briefForm.goal || text('新的落地页概念', 'New landing page concept')}`
-    await runGeneration(prompt, text(`生成 ${selectedDirection.name} 页面`, `Generate ${selectedDirection.name} page`), description)
+    const prompt = buildPromptForType(briefForm, selectedDirection, pageContext)
+    const description = `${selectedDirection.name} / ${briefForm.goal || text('新概念', 'New concept')}`
+    await runGeneration(prompt, text(`生成 ${selectedDirection.name}`, `Generate ${selectedDirection.name}`), description)
   }
 
   const handleTweak = async (tweak: QuickTweak) => {
     if (!generatedCode) return
-    const prompt = buildTweakPrompt(briefForm, selectedDirection, tweak, generatedCode)
+    const prompt = buildTweakPromptForType(briefForm, selectedDirection, tweak, generatedCode)
     const description = `${tweak.label} / ${briefForm.goal || text('当前页面优化', 'Current page refinement')}`
     await runGeneration(prompt, text(`微调：${tweak.label}`, `Tweak: ${tweak.label}`), description)
   }
@@ -919,64 +854,101 @@ export default function ChatPanel() {
                   </button>
                 </div>
 
+                {/* Page type selector */}
                 <div>
-                  <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                    {text('产品 / 品牌', 'Product / Brand')}
+                  <label className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                    {text('页面类型', 'Page Type')}
                   </label>
-                  <input
-                    className="input h-10 px-3"
-                    value={briefForm.product}
-                    onChange={(event) => setBriefForm({ product: event.target.value })}
-                    placeholder={text('Nova Analytics、AI 发票工具...', 'Nova Analytics, AI invoicing app...')}
-                  />
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {pageTypeConfigs.map((typeConfig) => {
+                      const isActiveType = typeConfig.id === briefForm.pageType
+                      return (
+                        <button
+                          key={typeConfig.id}
+                          type="button"
+                          className="rounded-[12px] border px-2 py-2 text-center text-xs transition-all"
+                          onClick={() => {
+                            const newDefault = typeConfig.directions[0]
+                            setBriefForm({
+                              pageType: typeConfig.id,
+                              directionId: newDefault.id,
+                              sections: typeConfig.defaultSections,
+                            })
+                          }}
+                          style={{
+                            background: isActiveType ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.4)',
+                            borderColor: isActiveType ? 'var(--border-accent)' : 'var(--border-subtle)',
+                            boxShadow: isActiveType ? 'var(--shadow-sm)' : 'none',
+                            color: isActiveType ? 'var(--text-primary)' : 'var(--text-muted)',
+                          }}
+                        >
+                          <div className="text-base leading-none mb-1">{typeConfig.icon}</div>
+                          <div className="font-medium leading-tight" style={{ fontSize: 10 }}>
+                            {isZh ? typeConfig.label : typeConfig.labelEn}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
 
-                <div>
-                  <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                    {text('目标受众', 'Audience')}
-                  </label>
-                  <input
-                    className="input h-10 px-3"
-                    value={briefForm.audience}
-                    onChange={(event) => setBriefForm({ audience: event.target.value })}
-                    placeholder={text('创业公司创始人、RevOps 团队...', 'Startup founders, RevOps teams...')}
-                  />
-                </div>
+                {/* Dynamic brief fields based on page type */}
+                {activeTypeConfig.briefFields.map((field) => (
+                  <div key={field.key}>
+                    <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                      {isZh ? field.label : field.labelEn}
+                    </label>
+                    {field.multiline ? (
+                      <textarea
+                        className="input min-h-[72px] px-3 py-2"
+                        value={briefForm[field.key] as string}
+                        onChange={(e) => setBriefForm({ [field.key]: e.target.value } as Partial<BriefFormState>)}
+                        placeholder={isZh ? field.placeholder : field.placeholderEn}
+                      />
+                    ) : (
+                      <input
+                        className="input h-10 px-3"
+                        value={briefForm[field.key] as string}
+                        onChange={(e) => setBriefForm({ [field.key]: e.target.value } as Partial<BriefFormState>)}
+                        placeholder={isZh ? field.placeholder : field.placeholderEn}
+                      />
+                    )}
+                  </div>
+                ))}
 
-                <div>
-                  <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                    {text('目标', 'Goal')}
-                  </label>
-                  <input
-                    className="input h-10 px-3"
-                    value={briefForm.goal}
-                    onChange={(event) => setBriefForm({ goal: event.target.value })}
-                    placeholder={text('推动预约演示、发布新功能...', 'Drive demo bookings, launch a feature...')}
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                    {text('必备区块', 'Required Sections')}
-                  </label>
-                  <input
-                    className="input h-10 px-3"
-                    value={briefForm.sections}
-                    onChange={(event) => setBriefForm({ sections: event.target.value })}
-                    placeholder={text('Hero、功能区、用户评价、定价...', 'Hero, features, testimonials, pricing...')}
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
-                    {text('补充说明', 'Notes')}
-                  </label>
-                  <textarea
-                    className="input min-h-[80px] px-3 py-2"
-                    value={briefForm.notes}
-                    onChange={(event) => setBriefForm({ notes: event.target.value })}
-                    placeholder={text('语气、参考站点、限制条件...', 'Tone, references, constraints...')}
-                  />
+                {/* Language + Dark mode row */}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                      {text('内容语言', 'Content Lang')}
+                    </label>
+                    <select
+                      className="input h-9 px-2 text-xs"
+                      value={briefForm.outputLang}
+                      onChange={(e) => setBriefForm({ outputLang: e.target.value })}
+                    >
+                      {OUTPUT_LANGUAGES.map(lang => (
+                        <option key={lang.value} value={lang.value}>{lang.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-muted)' }}>
+                      {text('暗色', 'Dark')}
+                    </label>
+                    <button
+                      type="button"
+                      className="flex h-9 w-16 items-center justify-center rounded-[10px] border text-xs font-medium transition-all"
+                      onClick={() => setBriefForm({ darkMode: !briefForm.darkMode })}
+                      style={{
+                        background: briefForm.darkMode ? '#1e293b' : 'rgba(255,255,255,0.4)',
+                        borderColor: briefForm.darkMode ? '#334155' : 'var(--border-subtle)',
+                        color: briefForm.darkMode ? '#e2e8f0' : 'var(--text-muted)',
+                      }}
+                    >
+                      {briefForm.darkMode ? '🌙 ON' : '☀️ OFF'}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Direction picker */}
@@ -1009,8 +981,8 @@ export default function ChatPanel() {
                               </svg>
                             )}
                           </div>
-                          <p className="mt-1 text-xs leading-snug" style={{ color: 'var(--text-muted)' }}>
-                            {preset.visualCue}
+                          <p className="mt-1 text-xs leading-snug line-clamp-2" style={{ color: 'var(--text-muted)' }}>
+                            {preset.summary}
                           </p>
                         </button>
                       )

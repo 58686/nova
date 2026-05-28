@@ -166,7 +166,20 @@ export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
   const [newPageName, setNewPageName] = useState('')
   const [newPagePath, setNewPagePath] = useState('')
   const [pathTouched, setPathTouched] = useState(false)
+  const [showExportMenu, setShowExportMenu] = useState(false)
   const addPageRef = useRef<HTMLDivElement>(null)
+  const exportMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!showExportMenu) return
+    const handler = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showExportMenu])
 
   useEffect(() => {
     if (!showAddPage) return
@@ -299,6 +312,37 @@ export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
     }
   }
 
+  const wrapAsReact = (html: string, name: string): string => {
+    const escaped = html.replace(/`/g, '\\`').replace(/\$\{/g, '\\${')
+    return `import React from 'react'\n\nexport default function ${name}() {\n  return (\n    <div dangerouslySetInnerHTML={{ __html: \`${escaped}\` }} />\n  )\n}\n`
+  }
+
+  const wrapAsVue = (html: string): string => {
+    return `<template>\n  <div v-html="html" />\n</template>\n\n<script setup lang="ts">\nconst html = \`${html.replace(/`/g, '\\`').replace(/\$\{/g, '\\${')}\`\n</script>\n`
+  }
+
+  const downloadText = (content: string, filename: string, mimeType: string) => {
+    const blob = new Blob([content], { type: mimeType })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = filename; a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleExportReact = () => {
+    if (!hasPreview) return
+    const compName = (currentProject?.name || 'NovaPage').replace(/[^a-zA-Z0-9]/g, '').replace(/^\d/, 'P') || 'NovaPage'
+    downloadText(wrapAsReact(generatedCode, compName), `${compName}.tsx`, 'text/plain')
+    setSuccess(text('React 组件已下载', 'React component downloaded'))
+  }
+
+  const handleExportVue = () => {
+    if (!hasPreview) return
+    const name = slugify(currentProject?.name || 'nova-page') || 'nova-page'
+    downloadText(wrapAsVue(generatedCode), `${name}.vue`, 'text/plain')
+    setSuccess(text('Vue 组件已下载', 'Vue component downloaded'))
+  }
+
   const handleOpenInBrowser = async () => {
     if (!hasPreview) {
       setError(text('请先生成页面。', 'Generate a page first.'))
@@ -419,13 +463,58 @@ export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
 
             <div className="mx-1 h-5 w-px" style={{ background: 'var(--border-subtle)' }} />
 
-            <button className="btn btn-primary" disabled={!hasPreview} onClick={handleExportHtml} type="button">
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 3v12m0 0 4-4m-4 4-4-4" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 17v1a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1" />
-              </svg>
-              {text('导出', 'Export')}
-            </button>
+            <div className="relative" ref={exportMenuRef}>
+              <div className="flex rounded-[10px] overflow-hidden" style={{ boxShadow: 'var(--shadow-sm)' }}>
+                <button
+                  className="btn btn-primary rounded-r-none border-r"
+                  style={{ borderRightColor: 'rgba(255,255,255,0.25)' }}
+                  disabled={!hasPreview}
+                  onClick={handleExportHtml}
+                  type="button"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 3v12m0 0 4-4m-4 4-4-4" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 17v1a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1" />
+                  </svg>
+                  {text('导出 HTML', 'Export HTML')}
+                </button>
+                <button
+                  className="btn btn-primary rounded-l-none px-2"
+                  disabled={!hasPreview}
+                  onClick={() => setShowExportMenu(v => !v)}
+                  type="button"
+                  title={text('更多导出格式', 'More export formats')}
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m19 9-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
+              {showExportMenu && (
+                <div
+                  className="absolute right-0 top-full z-40 mt-1.5 w-48 rounded-[16px] border p-1.5"
+                  style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border-default)', boxShadow: 'var(--shadow-lg)' }}
+                >
+                  {[
+                    { id: 'html', label: text('HTML 文件', 'HTML file'), desc: '.html', action: handleExportHtml },
+                    { id: 'react', label: text('React 组件', 'React component'), desc: '.tsx', action: handleExportReact },
+                    { id: 'vue', label: text('Vue 组件', 'Vue component'), desc: '.vue', action: handleExportVue },
+                  ].map(item => (
+                    <button
+                      key={item.id}
+                      className="flex w-full items-center justify-between rounded-[10px] px-3 py-2.5 text-left text-sm transition-colors"
+                      style={{ color: 'var(--text-primary)' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                      onClick={() => { item.action(); setShowExportMenu(false) }}
+                    >
+                      <span className="font-medium">{item.label}</span>
+                      <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>{item.desc}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
