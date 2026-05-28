@@ -13,7 +13,7 @@ export type AIProvider =
   | 'custom'
 
 // 日志函数
-export function addLog(type: 'info' | 'error' | 'success' | 'request', message: string, data?: any) {
+export function addLog(type: 'info' | 'error' | 'success' | 'request', message: string, data?: unknown) {
   if (import.meta.env.DEV) console.log(`[Nova ${type.toUpperCase()}]`, message, data || '')
   // 触发自定义事件，让调试面板可以捕获
   window.dispatchEvent(new CustomEvent('nova-log', { detail: { type, message, data } }))
@@ -332,11 +332,11 @@ export class AIService {
         model: this.config.model,
         response: response.slice(0, 100),
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return {
         success: false,
         latency: Date.now() - startTime,
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
       }
     }
   }
@@ -433,12 +433,12 @@ export class AIService {
       }
       
       onDone(fullText)
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[AI] Error:', error)
-      if (error.name === 'AbortError') {
+      if (error instanceof Error && error.name === 'AbortError') {
         onError('请求超时，请尝试使用更快的模型或简化描述')
       } else {
-        onError(error.message || '生成失败')
+        onError(error instanceof Error ? error.message : '生成失败')
       }
     }
   }
@@ -872,12 +872,11 @@ export class AIService {
         success: true,
         models,
       }
-    } catch (error: any) {
-      // 如果请求失败，返回默认列表
+    } catch (error: unknown) {
       return {
         success: true,
         models: this.getDefaultModels(),
-        error: `拉取失败: ${error.message}，显示默认模型列表`,
+        error: `拉取失败: ${error instanceof Error ? error.message : String(error)}，显示默认模型列表`,
       }
     }
   }

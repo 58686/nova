@@ -88,10 +88,10 @@ export default function AIConfigManager() {
       const fallbackModels = getDefaultModels(editConfig.provider)
       setFetchedModels(fallbackModels)
       setFetchError(result.error || text('没有获取到模型列表，已回退到默认模型。', 'No models were returned, so the default list was restored.'))
-    } catch (error: any) {
+    } catch (error: unknown) {
       const fallbackModels = getDefaultModels(editConfig.provider)
       setFetchedModels(fallbackModels)
-      setFetchError(error?.message || text('获取模型失败，已回退到默认模型。', 'Failed to fetch models, so the default list was restored.'))
+      setFetchError(error instanceof Error ? error.message : text('获取模型失败，已回退到默认模型。', 'Failed to fetch models, so the default list was restored.'))
     } finally {
       setIsFetchingModels(false)
     }
@@ -157,11 +157,11 @@ export default function AIConfigManager() {
           ? text(`连接成功 (${result.latency}ms)`, `Connection ok (${result.latency}ms)`)
           : result.error || text('连接失败', 'Connection failed'),
       })
-    } catch (error: any) {
+    } catch (error: unknown) {
       setTestResult({
         id,
         success: false,
-        message: error?.message || text('测试失败', 'Test failed'),
+        message: error instanceof Error ? error.message : text('测试失败', 'Test failed'),
       })
     } finally {
       setTestingId(null)

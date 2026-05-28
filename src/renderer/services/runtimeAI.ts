@@ -41,14 +41,14 @@ export class RuntimeAIService {
     try {
       const response = await attempt()
       return { success: true, latency: Date.now() - start, model: this.config.model, response: response.slice(0, 100) }
-    } catch (firstError: any) {
+    } catch {
       // One retry after 1s
       await new Promise(r => setTimeout(r, 1000))
       try {
         const response = await attempt()
         return { success: true, latency: Date.now() - start, model: this.config.model, response: response.slice(0, 100) }
-      } catch (error: any) {
-        return { success: false, latency: Date.now() - start, error: error?.message || '连接失败' }
+      } catch (error: unknown) {
+        return { success: false, latency: Date.now() - start, error: error instanceof Error ? error.message : '连接失败' }
       }
     }
   }
@@ -394,11 +394,11 @@ export class RuntimeAIService {
         success: true,
         models: models.length > 0 ? models : this.getDefaultModels(this.config.provider),
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return {
         success: true,
         models: this.getDefaultModels(this.config.provider),
-        error: error?.message || 'Failed to fetch models',
+        error: error instanceof Error ? error.message : 'Failed to fetch models',
       }
     }
   }

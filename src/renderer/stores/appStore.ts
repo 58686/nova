@@ -229,7 +229,7 @@ function saveVersionsToStorage(projectId: string, versions: Version[]) {
   try {
     localStorage.setItem(key, JSON.stringify(versions))
   } catch (e) {
-    const isQuota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || (e as any).code === 22)
+    const isQuota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || (e as DOMException & { code?: number }).code === 22)
     if (isQuota && versions.length > 5) {
       // Prune to most recent 5 versions and retry
       try {
@@ -319,9 +319,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const result = await getAIService().testConnection()
       set({ testResult: result, isTesting: false })
-    } catch (error: any) {
+    } catch (error: unknown) {
       set({
-        testResult: { success: false, error: error.message },
+        testResult: { success: false, error: error instanceof Error ? error.message : String(error) },
         isTesting: false,
       })
     }
@@ -443,7 +443,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       localStorage.setItem('nova-projects', JSON.stringify(updatedProjects))
     } catch (e) {
-      const isQuota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || (e as any).code === 22)
+      const isQuota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || (e as DOMException & { code?: number }).code === 22)
       if (isQuota) {
         set({ error: pickLocale(get().locale, '存储空间不足，内容可能未完全保存，建议导出 HTML 备份。', 'Storage quota exceeded — some changes may not be saved. Export HTML to back up your work.') })
       }
@@ -607,7 +607,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       localStorage.setItem('nova-projects', JSON.stringify(projects))
     } catch (e) {
-      const isQuota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || (e as any).code === 22)
+      const isQuota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || (e as DOMException & { code?: number }).code === 22)
       if (isQuota) {
         set({ error: pickLocale(get().locale, '存储空间不足，项目可能未完全保存。', 'Storage quota exceeded — project may not be saved.') })
       }

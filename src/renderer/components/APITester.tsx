@@ -43,14 +43,14 @@ export default function APITester() {
           response,
         ].join('\n'),
       )
-    } catch (error: any) {
+    } catch (error: unknown) {
       setResult(
         [
           text('连接失败', 'Connection failed'),
           `Provider: ${config.provider}`,
           `Model: ${config.model}`,
           '',
-          error?.message || text('未知错误', 'Unknown error'),
+          error instanceof Error ? error.message : text('未知错误', 'Unknown error'),
         ].join('\n'),
       )
     } finally {
