@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useLocale } from '../hooks/useLocale'
 import { Locale, pickLocale } from '../locale'
+import { RuntimeAIService } from '../services/runtimeAI'
+import { useAIConfigStore } from '../stores/aiConfigStore'
 import { useAppStore } from '../stores/appStore'
 
 type ViewportMode = 'desktop' | 'tablet' | 'mobile'
@@ -73,6 +75,37 @@ function slugify(value: string): string {
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
+}
+
+interface DetectedSection {
+  id: string
+  tag: string
+  label: string
+  outerHtml: string
+}
+
+function detectSections(html: string): DetectedSection[] {
+  const tags = ['header', 'nav', 'section', 'main', 'article', 'footer', 'aside']
+  const entries: { start: number; section: DetectedSection }[] = []
+
+  for (const tag of tags) {
+    const re = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi')
+    let m: RegExpExecArray | null
+    while ((m = re.exec(html)) !== null) {
+      const inner = m[0]
+      const headingMatch = inner.match(/<h[1-6][^>]*>([^<]*)<\/h[1-6]>/i)
+      const classMatch = inner.match(/class=["']([^"']*)/i)
+      const firstClass = classMatch?.[1].split(/\s+/).filter(Boolean)[0] || ''
+      const fallbackText = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40)
+      const label = headingMatch?.[1].trim() || firstClass || fallbackText || tag
+      entries.push({
+        start: m.index,
+        section: { id: `${tag}-${m.index}`, tag, label, outerHtml: inner },
+      })
+    }
+  }
+
+  return entries.sort((a, b) => a.start - b.start).map(e => e.section)
 }
 
 function getVisibleTextLength(html: string): number {
@@ -157,7 +190,9 @@ body { background: #ffffff !important; color: #171717 !important; }
 
 export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
   const { activeVersionId, currentProject, generatedCode, isGenerating, setError, setSuccess, versions,
-    currentPageId, projectPages, setCurrentPage, addPage, deletePage } = useAppStore()
+    currentPageId, projectPages, setCurrentPage, addPage, deletePage, addVersion } = useAppStore()
+  const { getActiveConfig } = useAIConfigStore()
+  const runtimeConfig = useMemo(() => getActiveConfig(), [getActiveConfig])
   const { locale, text } = useLocale()
   const [viewportMode, setViewportMode] = useState<ViewportMode>('desktop')
   const [frameKey, setFrameKey] = useState(0)
@@ -170,6 +205,13 @@ export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
   const addPageRef = useRef<HTMLDivElement>(null)
   const exportMenuRef = useRef<HTMLDivElement>(null)
 
+  // Section editor state
+  const [showSectionPanel, setShowSectionPanel] = useState(false)
+  const [selectedSection, setSelectedSection] = useState<DetectedSection | null>(null)
+  const [sectionInstruction, setSectionInstruction] = useState('')
+  const [isRevisingSection, setIsRevisingSection] = useState(false)
+  const sectionPanelRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     if (!showExportMenu) return
     const handler = (e: MouseEvent) => {
@@ -180,6 +222,18 @@ export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [showExportMenu])
+
+  useEffect(() => {
+    if (!showSectionPanel) return
+    const handler = (e: MouseEvent) => {
+      if (sectionPanelRef.current && !sectionPanelRef.current.contains(e.target as Node)) {
+        setShowSectionPanel(false)
+        setSelectedSection(null)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showSectionPanel])
 
   useEffect(() => {
     if (!showAddPage) return
@@ -263,6 +317,66 @@ export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
   useEffect(() => {
     if (useSafePreview) setShowSource(true)
   }, [useSafePreview])
+
+  const detectedSections = useMemo(() => detectSections(generatedCode), [generatedCode])
+
+  const handleReviseSection = async () => {
+    if (!selectedSection || !sectionInstruction.trim()) return
+    if (!runtimeConfig?.apiKey) {
+      setError(text('请先配置 AI 提供商。', 'Please configure an AI provider first.'))
+      return
+    }
+    setIsRevisingSection(true)
+    try {
+      const service = new RuntimeAIService(runtimeConfig)
+      const prompt = [
+        `You are revising a single HTML section from a web page.`,
+        `Instruction: "${sectionInstruction.trim()}"`,
+        ``,
+        `RULES:`,
+        `- Return ONLY the revised HTML section (the complete element from opening to closing tag).`,
+        `- Do NOT return the full page — just this one section.`,
+        `- Keep the same HTML tag and overall structure. Only change what the instruction asks.`,
+        `- All CSS must stay inline in a <style> block or as style attributes — do not reference external files.`,
+        `- No React/Vue/framework syntax. No external JS.`,
+        ``,
+        `CURRENT SECTION HTML:`,
+        selectedSection.outerHtml,
+      ].join('\n')
+
+      let revised = (await service.generate(prompt, [], false)).trim()
+
+      // Extract just the section tag from the response in case AI wrapped it
+      const tagMatch = revised.match(new RegExp(`<${selectedSection.tag}\\b[\\s\\S]*<\\/${selectedSection.tag}>`, 'i'))
+      if (tagMatch) revised = tagMatch[0]
+
+      if (!revised || !revised.startsWith('<')) {
+        setError(text('AI 返回的结果不是有效 HTML，请重试。', 'AI returned invalid HTML. Please try again.'))
+        return
+      }
+
+      const newHtml = generatedCode.replace(selectedSection.outerHtml, revised)
+      if (newHtml === generatedCode) {
+        setError(text('无法定位该区块，请刷新后重试。', 'Could not locate the section — refresh and try again.'))
+        return
+      }
+
+      addVersion({
+        code: newHtml,
+        description: `${text('局部修改', 'Section edit')}: ${selectedSection.label} — ${sectionInstruction.trim().slice(0, 60)}`,
+        generationTarget: 'full-page',
+        generationMode: 'single',
+      })
+      setSectionInstruction('')
+      setSelectedSection(null)
+      setShowSectionPanel(false)
+      setSuccess(text('区块已更新', 'Section updated'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : text('局部修改失败', 'Section revision failed'))
+    } finally {
+      setIsRevisingSection(false)
+    }
+  }
 
   const handleCopyHtml = async () => {
     if (!hasPreview) {
@@ -436,6 +550,82 @@ export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
             </div>
 
             <div className="mx-1 h-5 w-px" style={{ background: 'var(--border-subtle)' }} />
+
+            {/* Section editor button */}
+            <div className="relative" ref={sectionPanelRef}>
+              <button
+                className="btn-icon"
+                data-active={showSectionPanel}
+                disabled={!hasPreview || detectedSections.length === 0}
+                onClick={() => { setShowSectionPanel(v => !v); setSelectedSection(null); setSectionInstruction('') }}
+                title={text('局部修改区块', 'Edit a section')}
+                type="button"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                </svg>
+              </button>
+
+              {showSectionPanel && (
+                <div
+                  className="absolute right-0 top-full z-50 mt-1.5 w-72 rounded-[16px] border overflow-hidden"
+                  style={{ background: 'var(--bg-surface)', borderColor: 'var(--border-subtle)', boxShadow: 'var(--shadow-lg)' }}
+                >
+                  <div className="px-3 py-2.5 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+                    <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{text('局部修改', 'Edit Section')}</p>
+                    <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{text('选择区块，输入修改指令', 'Pick a section, then type an instruction')}</p>
+                  </div>
+
+                  {/* Section list */}
+                  <div className="max-h-48 overflow-y-auto py-1">
+                    {detectedSections.map(sec => (
+                      <button
+                        key={sec.id}
+                        type="button"
+                        className="w-full px-3 py-1.5 text-left text-xs flex items-center gap-2 transition-colors"
+                        style={{
+                          background: selectedSection?.id === sec.id ? 'var(--bg-hover)' : 'transparent',
+                          color: selectedSection?.id === sec.id ? 'var(--text-primary)' : 'var(--text-secondary)',
+                        }}
+                        onClick={() => setSelectedSection(selectedSection?.id === sec.id ? null : sec)}
+                      >
+                        <span className="shrink-0 rounded px-1 py-0.5 text-[9px] font-mono uppercase" style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)' }}>
+                          {sec.tag}
+                        </span>
+                        <span className="truncate">{sec.label}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Instruction input */}
+                  {selectedSection && (
+                    <div className="border-t px-3 py-2.5 space-y-2" style={{ borderColor: 'var(--border-subtle)' }}>
+                      <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        {text('修改', 'Revising')}: <span style={{ color: 'var(--text-primary)' }}>{selectedSection.label}</span>
+                      </p>
+                      <textarea
+                        className="input w-full min-h-[60px] px-3 py-2 text-xs resize-none"
+                        placeholder={text('输入修改指令，如"改为深色背景"…', 'E.g. "change to dark background"…')}
+                        value={sectionInstruction}
+                        onChange={e => setSectionInstruction(e.target.value)}
+                        onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') handleReviseSection() }}
+                      />
+                      <button
+                        className="btn btn-primary w-full"
+                        disabled={!sectionInstruction.trim() || isRevisingSection}
+                        onClick={handleReviseSection}
+                        type="button"
+                      >
+                        {isRevisingSection
+                          ? <><svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"/><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" className="opacity-75"/></svg>{text('修改中…', 'Revising…')}</>
+                          : text('修改此区块', 'Revise section')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Icon-only action buttons */}
             <button className="btn-icon" disabled={!hasPreview} onClick={() => setFrameKey((v) => v + 1)} title={text('刷新', 'Refresh')} type="button">
