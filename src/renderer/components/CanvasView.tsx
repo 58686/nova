@@ -358,16 +358,7 @@ export default function CanvasView({ onSwitchToPreview }: CanvasViewProps) {
     })
   }
 
-  const onMouseUp = (e: React.MouseEvent) => {
-    if (dragging && !didDrag) {
-      // It was a click, not a drag — check if they clicked a card
-      const card = (e.target as HTMLElement).closest('[data-card]')
-      if (card) {
-        // Let the card's onClick handle it
-        const cardClickEvent = new MouseEvent('click', { bubbles: true })
-        card.dispatchEvent(cardClickEvent)
-      }
-    }
+  const onMouseUp = (_e: React.MouseEvent) => {
     setDragging(false)
     setDidDrag(false)
   }

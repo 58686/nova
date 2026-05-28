@@ -4,7 +4,7 @@ import { Locale, pickLocale } from '../locale'
 import { RuntimeAIService } from '../services/runtimeAI'
 import { useAIConfigStore } from '../stores/aiConfigStore'
 import { useAppStore } from '../stores/appStore'
-import PptxGenJS from 'pptxgenjs'
+
 
 type ViewportMode = 'desktop' | 'tablet' | 'mobile'
 
@@ -504,6 +504,7 @@ export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
       const parser = new DOMParser()
       const doc = parser.parseFromString(generatedCode, 'text/html')
       const slideEls = doc.querySelectorAll('section.slide, .slide')
+      const PptxGenJS = (await import('pptxgenjs')).default
       const pptx = new PptxGenJS()
       pptx.layout = 'LAYOUT_WIDE'
       pptx.title = currentProject?.name || 'Nova Presentation'

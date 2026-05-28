@@ -14,7 +14,7 @@ export type AIProvider =
 
 // 日志函数
 export function addLog(type: 'info' | 'error' | 'success' | 'request', message: string, data?: any) {
-  console.log(`[Nova ${type.toUpperCase()}]`, message, data || '')
+  if (import.meta.env.DEV) console.log(`[Nova ${type.toUpperCase()}]`, message, data || '')
   // 触发自定义事件，让调试面板可以捕获
   window.dispatchEvent(new CustomEvent('nova-log', { detail: { type, message, data } }))
 }
@@ -369,9 +369,9 @@ export class AIService {
         ],
       }
 
-      console.log('[AI] Sending request to:', url)
-      console.log('[AI] Model:', this.config.model)
-      console.log('[AI] Max tokens:', body.max_tokens)
+      if (import.meta.env.DEV) console.log('[AI] Sending request to:', url)
+      if (import.meta.env.DEV) console.log('[AI] Model:', this.config.model)
+      if (import.meta.env.DEV) console.log('[AI] Max tokens:', body.max_tokens)
 
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 300000)
@@ -413,14 +413,14 @@ export class AIService {
       }
 
       const data = await response.json()
-      console.log('[AI] Response received')
-      
+      if (import.meta.env.DEV) console.log('[AI] Response received')
+
       if (!data.choices || !data.choices[0] || !data.choices[0].message) {
         throw new Error('API返回格式错误，请检查模型配置')
       }
 
       const content = data.choices[0].message.content
-      console.log('[AI] Content length:', content.length)
+      if (import.meta.env.DEV) console.log('[AI] Content length:', content.length)
       
       // 模拟流式输出 - 更快的更新频率
       const chunks = content.match(/.{1,50}/gs) || []
@@ -629,7 +629,7 @@ export class AIService {
     }
 
     // 调试日志
-    console.log('[AI] Request:', {
+    if (import.meta.env.DEV) console.log('[AI] Request:', {
       url,
       provider: this.config.provider,
       model: this.config.model,
@@ -674,8 +674,8 @@ export class AIService {
     }
 
     const data = await response.json()
-    console.log('[AI] Response received')
-    
+    if (import.meta.env.DEV) console.log('[AI] Response received')
+
     // 检查响应格式
     if (!data.choices || !data.choices[0] || !data.choices[0].message) {
       throw new Error('API返回格式错误，请检查模型配置')
@@ -941,8 +941,8 @@ export class AIService {
     // 清理响应
     let cleaned = response.trim()
     
-    console.log('[extractHTML] Input length:', cleaned.length)
-    console.log('[extractHTML] Input preview:', cleaned.substring(0, 100))
+    if (import.meta.env.DEV) console.log('[extractHTML] Input length:', cleaned.length)
+    if (import.meta.env.DEV) console.log('[extractHTML] Input preview:', cleaned.substring(0, 100))
 
     // 1. 移除开头的代码块标记
     cleaned = cleaned.replace(/^```(?:html|HTML)?\s*\n?/g, '')
@@ -953,19 +953,19 @@ export class AIService {
     // 3. 再次清理
     cleaned = cleaned.trim()
     
-    console.log('[extractHTML] After cleanup:', cleaned.substring(0, 100))
+    if (import.meta.env.DEV) console.log('[extractHTML] After cleanup:', cleaned.substring(0, 100))
 
     // 4. 尝试匹配完整的HTML文档
     const htmlMatch = cleaned.match(/<!DOCTYPE html>[\s\S]*<\/html>/i)
     if (htmlMatch) {
-      console.log('[extractHTML] Found complete HTML')
+      if (import.meta.env.DEV) console.log('[extractHTML] Found complete HTML')
       return htmlMatch[0].trim()
     }
 
     // 5. 尝试匹配 <html>...</html>
     const htmlTagMatch = cleaned.match(/<html[\s\S]*<\/html>/i)
     if (htmlTagMatch) {
-      console.log('[extractHTML] Found html tag')
+      if (import.meta.env.DEV) console.log('[extractHTML] Found html tag')
       return htmlTagMatch[0].trim()
     }
 
@@ -974,21 +974,21 @@ export class AIService {
     const hasHtmlClose = cleaned.includes('</html>')
     const hasBodyClose = cleaned.includes('</body>')
     
-    console.log('[extractHTML] hasDoctype:', hasDoctype, 'hasHtmlClose:', hasHtmlClose, 'hasBodyClose:', hasBodyClose)
-    
+    if (import.meta.env.DEV) console.log('[extractHTML] hasDoctype:', hasDoctype, 'hasHtmlClose:', hasHtmlClose, 'hasBodyClose:', hasBodyClose)
+
     // 7. 如果HTML不完整，尝试修复
     if (!hasHtmlClose || !hasBodyClose) {
-      console.log('[extractHTML] HTML incomplete, fixing...')
+      if (import.meta.env.DEV) console.log('[extractHTML] HTML incomplete, fixing...')
       cleaned = this.fixIncompleteHTML(cleaned)
     }
 
     // 8. 确保有完整的HTML结构
     if (!cleaned.includes('<!DOCTYPE')) {
-      console.log('[extractHTML] Wrapping in HTML')
+      if (import.meta.env.DEV) console.log('[extractHTML] Wrapping in HTML')
       cleaned = this.wrapInHTML(cleaned)
     }
 
-    console.log('[extractHTML] Output length:', cleaned.length)
+    if (import.meta.env.DEV) console.log('[extractHTML] Output length:', cleaned.length)
     return cleaned
   }
 
