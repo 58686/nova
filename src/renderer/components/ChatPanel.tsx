@@ -425,6 +425,7 @@ export default function ChatPanel() {
       if (looksLikeBlankShell(html)) {
         let recoveryBuffer = ''
         for await (const chunk of service.stream(buildStaticRecoveryPrompt(prompt, html), messages.slice(-2), controller.signal)) {
+          if (controller.signal.aborted) break
           recoveryBuffer += chunk
         }
         html = service.extractHTML(recoveryBuffer)

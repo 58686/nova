@@ -311,7 +311,9 @@ export default function CanvasView({ onSwitchToPreview }: CanvasViewProps) {
         const cy = e.clientY - rect.top
 
         setZoom((prevZoom) => {
-          const next = Math.max(0.25, Math.min(2, +(prevZoom * (1 - e.deltaY * 0.003)).toFixed(3)))
+          const raw = prevZoom * (1 - e.deltaY * 0.003)
+          const next = Math.max(0.25, Math.min(2, +raw.toFixed(3)))
+          if (!isFinite(next)) return prevZoom
           const ratio = next / prevZoom
           setOffset((prev) => ({
             x: cx - (cx - prev.x) * ratio,

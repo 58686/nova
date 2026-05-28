@@ -20,13 +20,15 @@ export default function ToastContainer() {
     if (!error) return
 
     const id = Date.now().toString()
-    setToasts((prev) => [...prev, { id, ...parseError(error, text) }])
+    const capturedError = error
+    setToasts((prev) => [...prev, { id, ...parseError(capturedError, text) }])
 
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       setToasts((prev) => prev.filter((item) => item.id !== id))
-      setTimeout(() => setError(null), 300)
     }, 6000)
-  }, [error, setError, text])
+
+    return () => clearTimeout(timer)
+  }, [error, text])
 
   useEffect(() => {
     if (!success) return
@@ -34,11 +36,12 @@ export default function ToastContainer() {
     const id = Date.now().toString()
     setToasts((prev) => [...prev, { id, type: 'success', message: success }])
 
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       setToasts((prev) => prev.filter((item) => item.id !== id))
-      setTimeout(() => setSuccess(null), 300)
     }, 3000)
-  }, [setSuccess, success])
+
+    return () => clearTimeout(timer)
+  }, [success])
 
   if (toasts.length === 0) return null
 

@@ -628,24 +628,24 @@ export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
             </div>
 
             {/* Icon-only action buttons */}
-            <button className="btn-icon" disabled={!hasPreview} onClick={() => setFrameKey((v) => v + 1)} title={text('刷新', 'Refresh')} type="button">
+            <button className="btn-icon" disabled={!hasPreview || isRevisingSection} onClick={() => setFrameKey((v) => v + 1)} title={text('刷新', 'Refresh')} type="button">
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 4v6h6M20 20v-6h-6" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M20 9a8 8 0 0 0-13.657-5.657L4 6m16 12-2.343-2.343A8 8 0 0 1 4 15" />
               </svg>
             </button>
-            <button className="btn-icon" disabled={!hasPreview} onClick={handleCopyHtml} title={text('复制 HTML', 'Copy HTML')} type="button">
+            <button className="btn-icon" disabled={!hasPreview || isRevisingSection} onClick={handleCopyHtml} title={text('复制 HTML', 'Copy HTML')} type="button">
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M6 9h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" />
               </svg>
             </button>
-            <button className="btn-icon" data-active={showSource} disabled={!hasPreview} onClick={() => setShowSource((v) => !v)} title={showSource ? text('关闭代码', 'Hide code') : text('查看代码', 'View code')} type="button">
+            <button className="btn-icon" data-active={showSource} disabled={!hasPreview || isRevisingSection} onClick={() => setShowSource((v) => !v)} title={showSource ? text('关闭代码', 'Hide code') : text('查看代码', 'View code')} type="button">
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 9 4 12l4 3m8-6 4 3-4 3M14 5l-4 14" />
               </svg>
             </button>
-            <button className="btn-icon" disabled={!hasPreview} onClick={handleOpenInBrowser} title={text('在浏览器中打开', 'Open in browser')} type="button">
+            <button className="btn-icon" disabled={!hasPreview || isRevisingSection} onClick={handleOpenInBrowser} title={text('在浏览器中打开', 'Open in browser')} type="button">
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
               </svg>
@@ -658,7 +658,7 @@ export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
                 <button
                   className="btn btn-primary rounded-r-none border-r"
                   style={{ borderRightColor: 'rgba(255,255,255,0.25)' }}
-                  disabled={!hasPreview}
+                  disabled={!hasPreview || isRevisingSection}
                   onClick={handleExportHtml}
                   type="button"
                 >

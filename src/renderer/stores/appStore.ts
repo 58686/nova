@@ -259,7 +259,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     localStorage.setItem('nova-locale', locale)
   },
 
-  aiConfig: JSON.parse(localStorage.getItem('nova-ai-config') || 'null') || DEFAULT_AI_CONFIG,
+  aiConfig: (() => { try { return JSON.parse(localStorage.getItem('nova-ai-config') || 'null') || DEFAULT_AI_CONFIG } catch { return DEFAULT_AI_CONFIG } })(),
   updateAIConfig: (config) => {
     const newConfig = { ...get().aiConfig, ...config }
     set({ aiConfig: newConfig })
@@ -269,7 +269,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   presets: getPresets(),
   applyPreset: (presetId) => {
-    const allPresets = [...DEFAULT_PRESETS, ...JSON.parse(localStorage.getItem('nova-presets') || '[]')]
+    const savedPresets = (() => { try { return JSON.parse(localStorage.getItem('nova-presets') || '[]') } catch { return [] } })()
+    const allPresets = [...DEFAULT_PRESETS, ...savedPresets]
     const preset = allPresets.find((item) => item.id === presetId)
 
     if (!preset) return
@@ -404,7 +405,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updatedPages = projectPages.filter((p) => p.id !== pageId)
     const updatedProject = { ...currentProject, pages: updatedPages }
     const updatedProjects = projects.map((p) => p.id === currentProject.id ? updatedProject : p)
-    const nextPage = currentPageId === pageId ? updatedPages[0] : projectPages.find((p) => p.id === currentPageId)!
+    const nextPage = currentPageId === pageId
+      ? updatedPages[0]
+      : (projectPages.find((p) => p.id === currentPageId) ?? updatedPages[0])
+
+    if (!nextPage) return
 
     set({ projectPages: updatedPages, currentProject: updatedProject, currentPageId: nextPage.id, generatedCode: nextPage.code, projects: updatedProjects })
     localStorage.setItem('nova-projects', JSON.stringify(updatedProjects))
@@ -476,11 +481,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ generatedCode: version.code, activeVersionId: version.id })
   },
   deleteVersion: (versionId) => {
-    const { currentProject, versions } = get()
+    const { currentProject, versions, activeVersionId } = get()
     if (!currentProject) return
 
     const updatedVersions = versions.filter((item) => item.id !== versionId)
-    set({ versions: updatedVersions })
+
+    // If we're deleting the currently active version, point to the next newest
+    const updates: Partial<AppState> = { versions: updatedVersions }
+    if (versionId === activeVersionId) {
+      const fallback = updatedVersions[updatedVersions.length - 1] ?? null
+      updates.activeVersionId = fallback?.id ?? null
+      updates.generatedCode = fallback?.code ?? ''
+    }
+
+    set(updates)
     saveVersionsToStorage(currentProject.id, updatedVersions)
   },
   activeVersionId: null,
