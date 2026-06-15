@@ -8,8 +8,10 @@ const APP_VERSION = '0.2.6'
 function getStorageUsage(): number {
   let total = 0
   for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i)!
-    total += key.length + (localStorage.getItem(key)?.length ?? 0)
+    const key = localStorage.key(i)
+    if (key) {
+      total += key.length + (localStorage.getItem(key)?.length ?? 0)
+    }
   }
   return total
 }

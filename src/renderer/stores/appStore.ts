@@ -253,8 +253,16 @@ function loadProjectsFromStorage(): Project[] {
   }
 }
 
-function writeProjectFileSafe(projectDirName: string, fileName: string, content: string) {
-  window.electronAPI?.writeProjectFile?.({ projectDirName, fileName, content })?.catch?.(() => {})
+function writeProjectFileSafe(projectDirName: string | undefined, fileName: string, content: string) {
+  if (!projectDirName) {
+    console.warn('Skipping file write: project directory not yet initialized')
+    return
+  }
+  window.electronAPI?.writeProjectFile?.({ projectDirName, fileName, content })?.catch?.((error: unknown) => {
+    console.error('Failed to write project file:', error)
+    const store = useAppStore.getState()
+    store.setError(pickLocale(store.locale, '文件保存失败，请检查磁盘空间或权限。', 'Failed to save file. Check disk space or permissions.'))
+  })
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -629,7 +637,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     if (project?.dirName && window.electronAPI?.deleteProjectDir) {
       window.electronAPI.deleteProjectDir({ projectDirName: project.dirName }).catch((err: unknown) => {
-        console.warn('Failed to delete project directory:', err)
+        console.error('Failed to delete project directory:', err)
+        set({ error: pickLocale(get().locale, '项目目录删除失败，可能需要手动清理。', 'Failed to delete project directory. Manual cleanup may be needed.') })
       })
     }
   },

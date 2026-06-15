@@ -319,6 +319,11 @@ export default function ChatPanel() {
   const visionSupported = supportsVision(runtimeConfig.provider)
 
   const runGeneration = async (prompt: string, label: string, description: string, imageData?: ImageData, skipUserMessage = false, pageContextHint = '') => {
+    if (isGenerating) {
+      console.warn('Generation already in progress, ignoring duplicate request')
+      return
+    }
+
     if (!runtimeConfig?.apiKey) {
       setError(text('请先配置 AI 提供商再开始生成。', 'Please configure an AI provider before generating.'))
       return

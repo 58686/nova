@@ -152,7 +152,11 @@ function buildPreviewDocument(html: string, safeMode: boolean): string {
   let previewHtml = html.trim()
 
   if (safeMode) {
+    // Remove script tags
     previewHtml = previewHtml.replace(/<script\b[\s\S]*?<\/script>/gi, '')
+    // Remove inline event handlers (onclick, onerror, onload, etc.)
+    previewHtml = previewHtml.replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, '')
+    previewHtml = previewHtml.replace(/\s+on\w+\s*=\s*[^\s>]*/gi, '')
   }
 
   const navScript = `<script data-nova-nav>(function(){document.addEventListener('click',function(e){var a=e.target.closest('a[href]');if(!a)return;var h=a.getAttribute('href');if(!h||h.startsWith('#')||h.startsWith('javascript:')||h.startsWith('mailto:')||h.startsWith('tel:')||/^https?:\/\//.test(h))return;e.preventDefault();window.parent.postMessage({type:'nova-navigate',href:h},'*');},true);})();<\/script>`

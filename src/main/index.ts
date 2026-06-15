@@ -117,14 +117,26 @@ function isUrlSafe(urlString: string): boolean {
   // Block private IPv4 ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16
   const ipv4Match = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
   if (ipv4Match) {
-    const [, a, b] = ipv4Match.map(Number)
-    if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254)) {
-      return false
-    }
+    const [, a, b, c, d] = ipv4Match.map(Number)
+    // 10.0.0.0/8
+    if (a === 10) return false
+    // 172.16.0.0/12
+    if (a === 172 && b >= 16 && b <= 31) return false
+    // 192.168.0.0/16
+    if (a === 192 && b === 168) return false
+    // 169.254.0.0/16 (link-local, AWS metadata)
+    if (a === 169 && b === 254) return false
+    // 127.0.0.0/8 (loopback)
+    if (a === 127) return false
+    // 0.0.0.0/8 (this network)
+    if (a === 0) return false
+    // 100.64.0.0/10 (shared address space)
+    if (a === 100 && b >= 64 && b <= 127) return false
   }
 
-  // Block link-local IPv6
-  if (hostname.startsWith('fe80:') || hostname.startsWith('fc00:') || hostname.startsWith('fd00:')) {
+  // Block link-local and private IPv6
+  // fe80::/10 (link-local), fc00::/7 (unique local), ::1 (loopback)
+  if (hostname.startsWith('fe80:') || hostname.startsWith('fc00:') || hostname.startsWith('fd00:') || hostname === '::1') {
     return false
   }
 
