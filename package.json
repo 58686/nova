@@ -97,11 +97,6 @@
       "target": [
         "AppImage"
       ]
-    },
-    "publish": {
-      "provider": "github",
-      "owner": "58686",
-      "repo": "nova"
     }
   }
 }
