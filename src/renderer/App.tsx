@@ -14,6 +14,7 @@ import { useLocale } from './hooks/useLocale'
 import { useKeyboard } from './hooks/useKeyboard'
 import { useAppStore } from './stores/appStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { migrateSecureData } from './services/secureDataMigration'
 
 type RightPanel = 'preview' | 'versions' | 'canvas'
 type ModalPanel = 'ai-config' | 'settings' | null
@@ -29,6 +30,10 @@ function App() {
 
   useEffect(() => {
     loadSettings()
+    // Migrate sensitive data to encrypted storage
+    migrateSecureData().catch(err => {
+      console.error('Failed to migrate secure data:', err)
+    })
   }, [])
 
   const hasGeneratedCode = generatedCode.trim().length > 0

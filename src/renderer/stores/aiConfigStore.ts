@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { nanoid } from 'nanoid'
 import { AIConfig, AIProvider, PROVIDERS } from '../services/ai'
+import { saveSecurePresets, loadSecurePresets } from '../services/secureDataMigration'
 
 export interface AIConfigPreset {
   id: string
@@ -90,6 +91,9 @@ const DEFAULT_CONFIGS: AIConfigPreset[] = [
 ]
 
 function loadPresets(): AIConfigPreset[] {
+  // Note: This loads synchronously on store creation.
+  // Actual encrypted data is loaded asynchronously via initializeSecureStore().
+  // We start with defaults and upgrade once decryption completes.
   try {
     const saved = localStorage.getItem('nova-ai-presets')
     if (saved) {
@@ -101,18 +105,24 @@ function loadPresets(): AIConfigPreset[] {
   return DEFAULT_CONFIGS
 }
 
-function savePresets(presets: AIConfigPreset[]) {
+async function savePresetsSecure(presets: AIConfigPreset[]) {
   try {
-    localStorage.setItem('nova-ai-presets', JSON.stringify(presets))
+    await saveSecurePresets(presets)
   } catch (e) {
-    console.warn('Failed to save AI presets:', e)
+    console.warn('Failed to save encrypted presets, falling back to plain text:', e)
+    // Fallback: save without encryption
+    try {
+      localStorage.setItem('nova-ai-presets', JSON.stringify(presets))
+    } catch (fallbackError) {
+      console.error('Failed to save presets:', fallbackError)
+    }
   }
 }
 
 export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
   presets: loadPresets(),
   activePresetId: localStorage.getItem('nova-active-preset') || null,
-  
+
   addPreset: (name, config) => {
     const newPreset: AIConfigPreset = {
       id: nanoid(),
@@ -121,26 +131,26 @@ export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
       isActive: false,
       createdAt: Date.now(),
     }
-    
+
     const presets = [...get().presets, newPreset]
     set({ presets })
-    savePresets(presets)
+    savePresetsSecure(presets) // Use encrypted save
   },
   
   updatePreset: (id, updates) => {
-    const presets = get().presets.map(p => 
+    const presets = get().presets.map(p =>
       p.id === id ? { ...p, ...updates } : p
     )
     set({ presets })
-    savePresets(presets)
+    savePresetsSecure(presets) // Use encrypted save
   },
-  
+
   deletePreset: (id) => {
     const presets = get().presets.filter(p => p.id !== id)
     const activePresetId = get().activePresetId === id ? null : get().activePresetId
-    
+
     set({ presets, activePresetId })
-    savePresets(presets)
+    savePresetsSecure(presets) // Use encrypted save
     
     if (activePresetId) {
       localStorage.setItem('nova-active-preset', activePresetId)
@@ -154,9 +164,9 @@ export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
       ...p,
       isActive: p.id === id,
     }))
-    
+
     set({ presets, activePresetId: id })
-    savePresets(presets)
+    savePresetsSecure(presets) // Use encrypted save
     localStorage.setItem('nova-active-preset', id)
   },
   

@@ -51,6 +51,11 @@ declare global {
       }) => Promise<string | null>
       listProjectDirs: () => Promise<Array<{ dirName: string; meta: Record<string, unknown> }>>
       deleteProjectDir: (payload: { projectDirName: string }) => Promise<{ success: boolean }>
+
+      // Secure storage (encryption)
+      encryptString: (plaintext: string) => Promise<{ success: boolean; encrypted?: string; error?: string }>
+      decryptString: (encryptedData: string) => Promise<{ success: boolean; decrypted?: string; error?: string }>
+      isEncryptionAvailable: () => Promise<boolean>
     }
   }
 }

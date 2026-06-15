@@ -3,6 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { loadSettings, saveSettings, NovaSettings } from './settings'
+import { encryptString, decryptString, isEncryptionAvailable } from './secureStorage'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -89,6 +90,28 @@ ipcMain.handle('export-html', async (event, html: string, defaultName?: string) 
   }
 
   return { success: false }
+})
+
+// ── Secure Storage (API Key Encryption) ────────────────────────────────────────
+
+ipcMain.handle('encrypt-string', async (event, plaintext: string) => {
+  try {
+    return { success: true, encrypted: encryptString(plaintext) }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Encryption failed' }
+  }
+})
+
+ipcMain.handle('decrypt-string', async (event, encryptedData: string) => {
+  try {
+    return { success: true, decrypted: decryptString(encryptedData) }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Decryption failed' }
+  }
+})
+
+ipcMain.handle('is-encryption-available', async () => {
+  return isEncryptionAvailable()
 })
 
 // ── URL Validation for Proxy (SSRF protection) ────────────────────────────────

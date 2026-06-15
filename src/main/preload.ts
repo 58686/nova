@@ -57,4 +57,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('list-project-dirs'),
   deleteProjectDir: (payload: { projectDirName: string }) =>
     ipcRenderer.invoke('delete-project-dir', payload),
+
+  // Secure storage (encryption)
+  encryptString: (plaintext: string) =>
+    ipcRenderer.invoke('encrypt-string', plaintext),
+  decryptString: (encryptedData: string) =>
+    ipcRenderer.invoke('decrypt-string', encryptedData),
+  isEncryptionAvailable: () =>
+    ipcRenderer.invoke('is-encryption-available'),
 })

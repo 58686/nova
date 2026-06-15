@@ -3,6 +3,7 @@
   "version": "0.2.6",
   "description": "AI驱动的UI生成工具 - 描述想法，Nova即刻生成",
   "author": "Nova Team",
+  "license": "MIT",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
