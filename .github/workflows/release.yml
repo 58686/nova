@@ -29,7 +29,7 @@ jobs:
         run: npm run test:run
 
       - name: Build Electron app
-        run: npm run electron:build
+        run: npm run electron:build -- --publish never
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
           DEBUG: electron-builder
