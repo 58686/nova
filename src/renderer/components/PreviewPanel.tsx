@@ -86,6 +86,22 @@ interface DetectedSection {
   outerHtml: string
 }
 
+// Pre-compiled regex patterns for section detection (avoid re-creating in loop)
+const SECTION_TAG_PATTERNS: Record<string, RegExp> = {
+  header: /<header\b[^>]*>[\s\S]*?<\/header>/gi,
+  nav: /<nav\b[^>]*>[\s\S]*?<\/nav>/gi,
+  section: /<section\b[^>]*>[\s\S]*?<\/section>/gi,
+  main: /<main\b[^>]*>[\s\S]*?<\/main>/gi,
+  article: /<article\b[^>]*>[\s\S]*?<\/article>/gi,
+  footer: /<footer\b[^>]*>[\s\S]*?<\/footer>/gi,
+  aside: /<aside\b[^>]*>[\s\S]*?<\/aside>/gi,
+}
+
+const HEADING_PATTERN = /<h[1-6][^>]*>([^<]*)<\/h[1-6]>/i
+const CLASS_PATTERN = /class=["']([^"']*)/i
+const TAG_STRIP_PATTERN = /<[^>]+>/g
+const WHITESPACE_PATTERN = /\s+/g
+
 function detectSections(html: string): DetectedSection[] {
   const tags = ['header', 'nav', 'section', 'main', 'article', 'footer', 'aside']
   const entries: { start: number; section: DetectedSection }[] = []
@@ -94,14 +110,15 @@ function detectSections(html: string): DetectedSection[] {
   const htmlForScan = html.length > 200_000 ? html.slice(0, 200_000) : html
 
   for (const tag of tags) {
-    const re = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi')
+    const re = SECTION_TAG_PATTERNS[tag]
+    re.lastIndex = 0 // Reset regex state for reuse
     let m: RegExpExecArray | null
     while ((m = re.exec(htmlForScan)) !== null) {
       const inner = m[0]
-      const headingMatch = inner.match(/<h[1-6][^>]*>([^<]*)<\/h[1-6]>/i)
-      const classMatch = inner.match(/class=["']([^"']*)/i)
-      const firstClass = classMatch?.[1].split(/\s+/).filter(Boolean)[0] || ''
-      const fallbackText = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40)
+      const headingMatch = inner.match(HEADING_PATTERN)
+      const classMatch = inner.match(CLASS_PATTERN)
+      const firstClass = classMatch?.[1].split(WHITESPACE_PATTERN).filter(Boolean)[0] || ''
+      const fallbackText = inner.replace(TAG_STRIP_PATTERN, ' ').replace(WHITESPACE_PATTERN, ' ').trim().slice(0, 40)
       const label = headingMatch?.[1].trim() || firstClass || fallbackText || tag
       entries.push({
         start: m.index,

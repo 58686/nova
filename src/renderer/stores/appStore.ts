@@ -294,9 +294,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     setTimeout(() => set({ success: null }), 3000)
   },
   saveCurrentAsPreset: (name, description) => {
+    const trimmedName = name.trim()
+    if (!trimmedName) {
+      set({ error: pickLocale(get().locale, '预设名称不能为空。', 'Preset name cannot be empty.') })
+      return
+    }
+
     const preset: ConfigPreset = {
       id: nanoid(),
-      name,
+      name: trimmedName,
       description,
       config: { ...get().aiConfig },
     }
@@ -400,6 +406,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const deletedIdx = projectPages.findIndex((p) => p.id === pageId)
     const updatedPages = projectPages.filter((p) => p.id !== pageId)
+
+    // Safety check: ensure at least one page remains
+    if (updatedPages.length === 0) {
+      console.error('Cannot delete last page')
+      return
+    }
+
     const updatedProject = { ...currentProject, pages: updatedPages }
     const updatedProjects = projects.map((p) => p.id === currentProject.id ? updatedProject : p)
 
@@ -432,6 +445,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       const isQuota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || (e as DOMException & { code?: number }).code === 22)
       if (isQuota) {
         set({ error: pickLocale(get().locale, '存储空间不足，内容可能未完全保存，建议导出 HTML 备份。', 'Storage quota exceeded — some changes may not be saved. Export HTML to back up your work.') })
+      } else {
+        console.error('Failed to save to localStorage:', e)
+        set({ error: pickLocale(get().locale, '保存失败，请重试。', 'Save failed. Please try again.') })
       }
     }
 

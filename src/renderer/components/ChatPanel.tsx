@@ -582,7 +582,10 @@ export default function ChatPanel() {
       briefForm.audience ? `Audience: ${briefForm.audience}` : '',
     ].filter(Boolean).join('\n')
     try {
-      const response = await service.generate(prompt, [], false)
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Clarification check timed out')), 15000)
+      )
+      const response = await Promise.race([service.generate(prompt, [], false), timeoutPromise])
       if (response.includes('[ASK]')) {
         const question = response.split('[ASK]')[1]?.trim() || text(
           '请描述一下您想要的页面内容和用途，我可以为您更好地生成。',

@@ -45,17 +45,23 @@ export class RuntimeAIService {
 
   async testConnection(): Promise<TestResult> {
     const start = Date.now()
+    const timeout = 30000 // 30s timeout
     const attempt = async (): Promise<string> => {
       return this.generate('回复"连接成功"四个字', [], true)
     }
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Connection test timed out after 30s')), timeout)
+    )
+
     try {
-      const response = await attempt()
+      const response = await Promise.race([attempt(), timeoutPromise])
       return { success: true, latency: Date.now() - start, model: this.config.model, response: response.slice(0, 100) }
     } catch {
       // One retry after 1s
       await new Promise(r => setTimeout(r, 1000))
       try {
-        const response = await attempt()
+        const response = await Promise.race([attempt(), timeoutPromise])
         return { success: true, latency: Date.now() - start, model: this.config.model, response: response.slice(0, 100) }
       } catch (error: unknown) {
         return { success: false, latency: Date.now() - start, error: error instanceof Error ? error.message : '连接失败' }
@@ -460,7 +466,7 @@ export class RuntimeAIService {
     })
 
     const data = await this.parseResponse(response)
-    return data.content?.[0]?.text || ''
+    return this.extractText(data, 'anthropic')
   }
 
   private async callOpenAICompatible(messages: Message[], isTest: boolean, imageData?: ImageData): Promise<string> {
@@ -483,7 +489,7 @@ export class RuntimeAIService {
     })
 
     const data = await this.parseResponse(response)
-    return data.choices?.[0]?.message?.content || ''
+    return this.extractText(data, 'openai')
   }
 
   private async callOpenRouter(messages: Message[], isTest: boolean, imageData?: ImageData): Promise<string> {
@@ -507,7 +513,7 @@ export class RuntimeAIService {
     })
 
     const data = await this.parseResponse(response)
-    return data.choices?.[0]?.message?.content || ''
+    return this.extractText(data, 'openai')
   }
 
   private async callZhipu(messages: Message[], isTest: boolean): Promise<string> {
@@ -529,18 +535,19 @@ export class RuntimeAIService {
     })
 
     const data = await this.parseResponse(response)
-    return data.choices?.[0]?.message?.content || ''
+    return this.extractText(data, 'openai')
   }
 
-  private async parseResponse(response: Response): Promise<any> {
+  private async parseResponse(response: Response): Promise<unknown> {
     if (!response.ok) {
       const errorText = await response.text()
       let errorMessage = `API error (${response.status})`
 
       try {
         const data = JSON.parse(errorText)
-        if (data.error) {
-          errorMessage = data.error.message || data.error
+        if (data && typeof data === 'object' && 'error' in data) {
+          const error = data.error
+          errorMessage = typeof error === 'string' ? error : (error?.message || errorMessage)
         }
       } catch {
         errorMessage = `${errorMessage}: ${errorText.slice(0, 300)}`
@@ -550,6 +557,31 @@ export class RuntimeAIService {
     }
 
     return response.json()
+  }
+
+  private extractText(data: unknown, path: string): string {
+    if (!data || typeof data !== 'object') return ''
+
+    // For Anthropic: data.content?.[0]?.text
+    if (path === 'anthropic') {
+      const obj = data as Record<string, unknown>
+      if ('content' in obj && Array.isArray(obj.content) && obj.content[0]) {
+        const first = obj.content[0] as Record<string, unknown>
+        return typeof first.text === 'string' ? first.text : ''
+      }
+    }
+
+    // For OpenAI-compatible: data.choices?.[0]?.message?.content
+    if (path === 'openai') {
+      const obj = data as Record<string, unknown>
+      if ('choices' in obj && Array.isArray(obj.choices) && obj.choices[0]) {
+        const choice = obj.choices[0] as Record<string, unknown>
+        const message = choice.message as Record<string, unknown> | undefined
+        return message && typeof message.content === 'string' ? message.content : ''
+      }
+    }
+
+    return ''
   }
 
   private async performRequest(targetUrl: string, options: RequestInit): Promise<Response> {
@@ -607,6 +639,12 @@ export class RuntimeAIService {
 
   private buildChatUrl(): string {
     const apiPath = this.config.apiPath || '/v1/chat/completions'
+
+    // Prevent path injection: block // (protocol-relative), javascript:, data:
+    if (apiPath.includes('//') || /^(javascript|data|file):/i.test(apiPath)) {
+      throw new Error('Invalid API path: potential injection detected')
+    }
+
     return `${this.normalizeBaseUrl(this.config.baseUrl)}${apiPath.startsWith('/') ? apiPath : `/${apiPath}`}`
   }
 
@@ -635,18 +673,31 @@ export class RuntimeAIService {
     return baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
   }
 
-  private parseModels(data: any): string[] {
-    let models: string[] = []
-
-    if (Array.isArray(data?.data)) {
-      models = data.data.map((item: any) => item.id || item.model)
-    } else if (Array.isArray(data?.models)) {
-      models = data.models.map((item: any) => (typeof item === 'string' ? item : item.id || item.model))
-    } else if (Array.isArray(data)) {
-      models = data.map((item: any) => (typeof item === 'string' ? item : item.id || item.model))
+  private parseModels(data: unknown): string[] {
+    if (!data || typeof data !== 'object') {
+      return []
     }
 
-    return [...new Set(models.filter(Boolean))]
+    const extractModelId = (item: unknown): string | undefined => {
+      if (typeof item === 'string') return item
+      if (item && typeof item === 'object') {
+        const obj = item as Record<string, unknown>
+        return (typeof obj.id === 'string' ? obj.id : undefined) || (typeof obj.model === 'string' ? obj.model : undefined)
+      }
+      return undefined
+    }
+
+    let models: (string | undefined)[] = []
+
+    if ('data' in data && Array.isArray(data.data)) {
+      models = data.data.map(extractModelId)
+    } else if ('models' in data && Array.isArray(data.models)) {
+      models = data.models.map(extractModelId)
+    } else if (Array.isArray(data)) {
+      models = data.map(extractModelId)
+    }
+
+    return [...new Set(models.filter((m): m is string => typeof m === 'string' && m.length > 0))]
   }
 
   private getDefaultModels(provider: AIProvider): string[] {
