@@ -38,8 +38,15 @@ Nova is an AI-powered multi-page UI generator built as an Electron desktop app. 
 ### Configuration & Export
 - AI provider configuration panel with connection test
 - Saved presets for quick provider switching
+- **Encrypted API key storage** using OS-level encryption (Electron safeStorage)
 - HTML copy and export (via Electron file dialog)
 - Data storage settings (localStorage-backed, no backend required)
+
+### Developer Features
+- **Undo/Redo system** (Ctrl+Z / Ctrl+Y) for reversible actions
+- **Structured logging** with file rotation and 7-day retention
+- **Unit tests** (29 tests with Vitest) covering core utilities and AI services
+- TypeScript strict mode with comprehensive type safety
 
 ## Tech Stack
 
@@ -49,8 +56,10 @@ Nova is an AI-powered multi-page UI generator built as an Electron desktop app. 
 | Build tool | Vite |
 | Styling | Tailwind CSS + CSS custom properties |
 | State | Zustand |
-| Desktop shell | Electron |
+| Desktop shell | Electron 42.4.0 |
+| Testing | Vitest + @testing-library/react |
 | AI abstraction | Custom `RuntimeAIService` (streaming, 12 providers) |
+| Security | OS-level encryption (safeStorage), SSRF protection |
 | Persistence | localStorage (no server required) |
 
 ## Getting Started
@@ -73,6 +82,18 @@ npm run typecheck
 # Lint
 npm run lint
 
+# Run unit tests (watch mode)
+npm test
+
+# Run tests once (CI mode)
+npm run test:run
+
+# Run tests with coverage report
+npm run test:coverage
+
+# Run tests with UI
+npm run test:ui
+
 # Production renderer build
 npm run build
 
@@ -89,12 +110,16 @@ src/
   main/
     index.ts          Electron main process — file I/O, HTTP proxy, IPC handlers
     preload.ts        contextBridge API exposed to renderer as window.electronAPI
+    secureStorage.ts  API key encryption using Electron safeStorage
+    logger.ts         Structured logging with file rotation
   renderer/
     components/       UI components (ChatPanel, PreviewPanel, CanvasView, Header, …)
     stores/           Zustand stores (appStore, aiConfigStore, settingsStore)
-    services/         AI provider abstraction (runtimeAI.ts, ai.ts)
+    services/         AI provider abstraction, logging, command history, secure storage
     hooks/            useLocale, useKeyboard
     locale/           zh-CN / en-US string selection
+  test/
+    setup.ts          Vitest test configuration and mocks
 scripts/
   electron-launcher.js  Strips ELECTRON_RUN_AS_NODE before spawning Electron
 public/               Static assets
@@ -114,4 +139,4 @@ UI supports Chinese (zh-CN) and English (en-US). Language is stored in `localSto
 
 ## License
 
-No license file has been added yet.
+MIT License - see [LICENSE](LICENSE) file for details.
