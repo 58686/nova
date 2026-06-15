@@ -229,9 +229,14 @@ function saveVersionsToStorage(projectId: string, versions: Version[]) {
       // Prune to most recent 5 versions and retry
       try {
         localStorage.setItem(key, JSON.stringify(versions.slice(-5)))
-      } catch { /* give up silently */ }
+      } catch (retryError) {
+        console.error('Failed to save versions even after pruning:', retryError)
+        const store = useAppStore.getState()
+        store.setError(pickLocale(store.locale, '版本历史保存失败，建议导出备份。', 'Failed to save version history. Export to back up.'))
+      }
+    } else {
+      console.warn('Failed to save versions:', e)
     }
-    console.warn('Failed to save versions:', e)
   }
 }
 
@@ -474,6 +479,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   addVersion: ({ code, description, generationTarget = 'full-page', generationMode = 'single', variantGroupId, variantLabel, baseVersionId }) => {
     const { currentProject, versions } = get()
     if (!currentProject) return null
+
+    // Warn if generated HTML is very large (>2MB)
+    const sizeInBytes = new Blob([code]).size
+    if (sizeInBytes > 2 * 1024 * 1024) {
+      const sizeMB = (sizeInBytes / (1024 * 1024)).toFixed(1)
+      console.warn(`Generated HTML is large (${sizeMB}MB), may impact performance`)
+      set({
+        error: pickLocale(
+          get().locale,
+          `生成的 HTML 较大 (${sizeMB}MB)，可能影响性能。建议简化内容或分页。`,
+          `Generated HTML is large (${sizeMB}MB), may impact performance. Consider simplifying or splitting into pages.`
+        )
+      })
+    }
 
     const newVersion: Version = {
       id: nanoid(),

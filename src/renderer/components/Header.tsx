@@ -14,7 +14,9 @@ function useUpdater() {
   useEffect(() => {
     const api = window.electronAPI
     if (!api) return
-    api.getAppVersion().then(setAppVersion).catch(() => {})
+    api.getAppVersion().then(setAppVersion).catch((err) => {
+      console.warn('Failed to get app version:', err)
+    })
     api.onUpdateAvailable?.((info) => setUpdate({ status: 'available', version: info.version }))
   }, [])
 
