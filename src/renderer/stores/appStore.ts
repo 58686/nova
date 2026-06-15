@@ -180,7 +180,7 @@ const DEFAULT_AI_CONFIG: AIConfig = {
   baseUrl: 'https://api.anthropic.com',
   model: 'claude-3-5-sonnet-20241022',
   temperature: 0.7,
-  maxTokens: 4096,
+  maxTokens: 16384,
   timeout: 60000,
 }
 

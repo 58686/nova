@@ -18,7 +18,7 @@ const DEFAULT_EDIT_CONFIG: AIConfig = {
   apiPath: '/v1/chat/completions',
   model: 'gpt-4o',
   temperature: 0.7,
-  maxTokens: 4096,
+  maxTokens: 16384,
   timeout: 60000,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
 }

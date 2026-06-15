@@ -175,7 +175,7 @@ export const DEFAULT_PRESETS: ConfigPreset[] = [
       provider: 'anthropic',
       model: 'claude-3-5-sonnet-20241022',
       temperature: 0.7,
-      maxTokens: 4096,
+      maxTokens: 16384,
     },
     isDefault: true,
   },
@@ -187,7 +187,7 @@ export const DEFAULT_PRESETS: ConfigPreset[] = [
       provider: 'openai',
       model: 'gpt-4o',
       temperature: 0.7,
-      maxTokens: 4096,
+      maxTokens: 16384,
     },
   },
   {
@@ -198,7 +198,7 @@ export const DEFAULT_PRESETS: ConfigPreset[] = [
       provider: 'deepseek',
       model: 'deepseek-coder',
       temperature: 0.7,
-      maxTokens: 4096,
+      maxTokens: 16384,
     },
   },
   {
@@ -209,7 +209,7 @@ export const DEFAULT_PRESETS: ConfigPreset[] = [
       provider: 'qwen',
       model: 'qwen-max',
       temperature: 0.7,
-      maxTokens: 4096,
+      maxTokens: 16384,
     },
   },
   {
@@ -220,7 +220,7 @@ export const DEFAULT_PRESETS: ConfigPreset[] = [
       provider: 'zhipu',
       model: 'glm-4',
       temperature: 0.7,
-      maxTokens: 4096,
+      maxTokens: 16384,
     },
   },
   {
@@ -231,7 +231,7 @@ export const DEFAULT_PRESETS: ConfigPreset[] = [
       provider: 'moonshot',
       model: 'moonshot-v1-128k',
       temperature: 0.7,
-      maxTokens: 4096,
+      maxTokens: 16384,
     },
   },
 ]
