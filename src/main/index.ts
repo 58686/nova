@@ -4,6 +4,7 @@ import os from 'os'
 import path from 'path'
 import { loadSettings, saveSettings, NovaSettings } from './settings'
 import { encryptString, decryptString, isEncryptionAvailable } from './secureStorage'
+import { writeLog, getLogDir, mainLogger } from './logger'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -112,6 +113,21 @@ ipcMain.handle('decrypt-string', async (event, encryptedData: string) => {
 
 ipcMain.handle('is-encryption-available', async () => {
   return isEncryptionAvailable()
+})
+
+// ── Logging ────────────────────────────────────────────────────────────────────
+
+ipcMain.handle('write-log', async (event, entry: unknown) => {
+  try {
+    writeLog(entry as any)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Log write failed' }
+  }
+})
+
+ipcMain.handle('get-log-dir', async () => {
+  return getLogDir()
 })
 
 // ── URL Validation for Proxy (SSRF protection) ────────────────────────────────

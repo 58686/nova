@@ -65,4 +65,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('decrypt-string', encryptedData),
   isEncryptionAvailable: () =>
     ipcRenderer.invoke('is-encryption-available'),
+
+  // Logging
+  writeLog: (entry: unknown) =>
+    ipcRenderer.invoke('write-log', entry),
+  getLogDir: () =>
+    ipcRenderer.invoke('get-log-dir'),
 })

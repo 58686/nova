@@ -56,6 +56,10 @@ declare global {
       encryptString: (plaintext: string) => Promise<{ success: boolean; encrypted?: string; error?: string }>
       decryptString: (encryptedData: string) => Promise<{ success: boolean; decrypted?: string; error?: string }>
       isEncryptionAvailable: () => Promise<boolean>
+
+      // Logging
+      writeLog: (entry: unknown) => Promise<{ success: boolean; error?: string }>
+      getLogDir: () => Promise<string>
     }
   }
 }

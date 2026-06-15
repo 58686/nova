@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useAppStore } from '../stores/appStore'
+import { commandHistory } from '../services/commandHistory'
 
 export function useKeyboard() {
   const {
@@ -48,12 +49,20 @@ export function useKeyboard() {
       }
 
       if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
-        // Only undo if not in a text input/textarea
+        // Undo command
         const target = event.target as HTMLElement
         if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') {
           event.preventDefault()
-          const idx = versions.findIndex(v => v.id === activeVersionId)
-          if (idx > 0) restoreVersion(versions[idx - 1].id)
+          commandHistory.undo()
+        }
+      }
+
+      if ((event.ctrlKey || event.metaKey) && (event.key === 'y' || (event.key === 'z' && event.shiftKey))) {
+        // Redo command (Ctrl+Y or Ctrl+Shift+Z)
+        const target = event.target as HTMLElement
+        if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') {
+          event.preventDefault()
+          commandHistory.redo()
         }
       }
     }
@@ -70,5 +79,6 @@ export const SHORTCUTS = [
   { keys: ['Ctrl', 'B'], description: 'Toggle sidebar' },
   { keys: ['Ctrl', 'P'], description: 'Focus preview' },
   { keys: ['Esc'], description: 'Cancel / close' },
-  { keys: ['Ctrl', 'Z'], description: 'Undo last version' },
+  { keys: ['Ctrl', 'Z'], description: 'Undo' },
+  { keys: ['Ctrl', 'Y'], description: 'Redo' },
 ]

@@ -1,7 +1,9 @@
+import { aiLogger } from './logger'
+
 // AI提供商类型
-export type AIProvider = 
-  | 'anthropic' 
-  | 'openai' 
+export type AIProvider =
+  | 'anthropic'
+  | 'openai'
   | 'openrouter'
   | 'deepseek'
   | 'zhipu'      // 智谱
@@ -14,7 +16,13 @@ export type AIProvider =
 
 // 日志函数
 export function addLog(type: 'info' | 'error' | 'success' | 'request', message: string, data?: unknown) {
-  if (import.meta.env.DEV) console.log(`[Nova ${type.toUpperCase()}]`, message, data || '')
+  // Use structured logger
+  if (type === 'error') {
+    aiLogger.error(message, data)
+  } else {
+    aiLogger.info(`[${type}] ${message}`, data)
+  }
+
   // 触发自定义事件，让调试面板可以捕获
   window.dispatchEvent(new CustomEvent('nova-log', { detail: { type, message, data } }))
 }
