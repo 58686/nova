@@ -35,7 +35,9 @@ function createWindow() {
 }
 
 ipcMain.handle('save-file', async (event, content: string, defaultName?: string) => {
-  const result = await dialog.showSaveDialog(mainWindow!, {
+  if (!mainWindow) return { success: false, error: 'Window not available' }
+
+  const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: defaultName || 'design.json',
     filters: [
       { name: 'DevUI Files', extensions: ['json'] },
@@ -52,7 +54,9 @@ ipcMain.handle('save-file', async (event, content: string, defaultName?: string)
 })
 
 ipcMain.handle('load-file', async () => {
-  const result = await dialog.showOpenDialog(mainWindow!, {
+  if (!mainWindow) return { success: false, error: 'Window not available' }
+
+  const result = await dialog.showOpenDialog(mainWindow, {
     filters: [
       { name: 'DevUI Files', extensions: ['json'] },
       { name: 'All Files', extensions: ['*'] },
@@ -69,7 +73,9 @@ ipcMain.handle('load-file', async () => {
 })
 
 ipcMain.handle('export-html', async (event, html: string, defaultName?: string) => {
-  const result = await dialog.showSaveDialog(mainWindow!, {
+  if (!mainWindow) return { success: false, error: 'Window not available' }
+
+  const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: defaultName || 'design.html',
     filters: [
       { name: 'HTML Files', extensions: ['html'] },
@@ -85,6 +91,46 @@ ipcMain.handle('export-html', async (event, html: string, defaultName?: string) 
   return { success: false }
 })
 
+// ── URL Validation for Proxy (SSRF protection) ────────────────────────────────
+
+function isUrlSafe(urlString: string): boolean {
+  let url: URL
+  try {
+    url = new URL(urlString)
+  } catch {
+    return false
+  }
+
+  // Only allow https (or http for localhost in dev)
+  if (url.protocol !== 'https:' && !(process.env.NODE_ENV === 'development' && url.protocol === 'http:')) {
+    return false
+  }
+
+  // Block private IP ranges and localhost
+  const hostname = url.hostname.toLowerCase()
+
+  // Block localhost variants
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname.startsWith('127.')) {
+    return false
+  }
+
+  // Block private IPv4 ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16
+  const ipv4Match = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
+  if (ipv4Match) {
+    const [, a, b] = ipv4Match.map(Number)
+    if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254)) {
+      return false
+    }
+  }
+
+  // Block link-local IPv6
+  if (hostname.startsWith('fe80:') || hostname.startsWith('fc00:') || hostname.startsWith('fd00:')) {
+    return false
+  }
+
+  return true
+}
+
 // Streaming proxy — sends chunks back to renderer via sender events while request is in flight
 ipcMain.handle(
   'proxy-stream',
@@ -99,6 +145,14 @@ ipcMain.handle(
       timeout?: number
     },
   ) => {
+    if (!isUrlSafe(payload.url)) {
+      return {
+        ok: false,
+        status: 403,
+        body: JSON.stringify({ error: { message: 'Forbidden: URL not allowed by security policy' } }),
+      }
+    }
+
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), payload.timeout || 300000)
     try {
@@ -149,6 +203,15 @@ ipcMain.handle(
       timeout?: number
     },
   ) => {
+    if (!isUrlSafe(payload.url)) {
+      return {
+        ok: false,
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ error: { message: 'Forbidden: URL not allowed by security policy' } }),
+      }
+    }
+
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), payload.timeout || 300000)
 
@@ -200,7 +263,9 @@ ipcMain.handle('open-in-browser', async (event, html: string) => {
 // ── PDF export ────────────────────────────────────────────────────────────────
 
 ipcMain.handle('export-pdf', async (event, html: string, defaultName?: string) => {
-  const result = await dialog.showSaveDialog(mainWindow!, {
+  if (!mainWindow) return { success: false, error: 'Window not available' }
+
+  const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: defaultName || 'export.pdf',
     filters: [
       { name: 'PDF Files', extensions: ['pdf'] },
@@ -248,7 +313,9 @@ ipcMain.handle('save-settings', (event, settings: NovaSettings) => {
 })
 
 ipcMain.handle('select-data-dir', async () => {
-  const result = await dialog.showOpenDialog(mainWindow!, {
+  if (!mainWindow) return null
+
+  const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory', 'createDirectory'],
     title: '选择项目数据目录 / Select Project Data Directory',
   })

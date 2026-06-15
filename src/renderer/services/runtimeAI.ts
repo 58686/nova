@@ -1,9 +1,19 @@
 import { AIConfig, AIProvider, Message, ModelsResponse, TestResult } from './ai'
 
-const DEFAULT_SYSTEM_PROMPT =
-  'You are an expert UI designer and frontend engineer. Return only the requested HTML or text with no markdown fences unless explicitly requested.'
+export const DEFAULT_SYSTEM_PROMPT = `You are an expert UI designer and frontend engineer who writes production-quality HTML and CSS.
+
+CORE PRINCIPLES:
+- Take your time. Build the page deliberately — structure first, then visual polish, then output. Do not rush.
+- Be thorough. Cover responsive breakpoints, interactive states, and edge cases. Pixel-perfect intentionality.
+- Never output placeholders. Every line of content — names, numbers, labels, paragraphs — must read like a real product.
+- Self-contained: one complete HTML file, all CSS in <style>, zero external JS. Google Fonts @import is the only allowed external resource.
+- Pure HTML/CSS only. No React, Vue, Svelte, JSX, or template variables of any kind.
+- Follow the detailed output rules in the user's message exactly — they exist for a reason.`
 
 const ANTHROPIC_MODELS = [
+  'claude-opus-4-8',
+  'claude-sonnet-4-6',
+  'claude-haiku-4-5',
   'claude-opus-4-5',
   'claude-sonnet-4-5',
   'claude-haiku-4-5',
@@ -646,7 +656,7 @@ export class RuntimeAIService {
       case 'openai':
         return ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo']
       case 'openrouter':
-        return ['anthropic/claude-opus-4-5', 'anthropic/claude-sonnet-4-5', 'anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'google/gemini-pro-1.5']
+        return ['anthropic/claude-opus-4-8', 'anthropic/claude-sonnet-4-6', 'anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'google/gemini-pro-1.5']
       case 'deepseek':
         return ['deepseek-reasoner', 'deepseek-coder', 'deepseek-chat']
       case 'zhipu':
@@ -662,7 +672,7 @@ export class RuntimeAIService {
       case 'nvidia':
         return ['meta/llama-3.1-70b-instruct', 'meta/llama-3.1-8b-instruct', 'mistralai/mixtral-8x22b-instruct-v0.1']
       case 'custom':
-        return ['gpt-4o', 'gpt-4o-mini', 'claude-3-5-sonnet', 'deepseek-coder']
+        return ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'gpt-4o', 'gpt-4o-mini', 'deepseek-coder']
       default:
         return ['gpt-4o', 'gpt-4o-mini']
     }

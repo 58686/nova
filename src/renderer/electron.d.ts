@@ -32,8 +32,6 @@ declare global {
       checkForUpdates: () => Promise<void>
       installUpdate: () => Promise<void>
       onUpdateAvailable: (cb: (info: { version: string }) => void) => void
-      onUpdateProgress: (cb: (info: { percent: number }) => void) => void
-      onUpdateDownloaded: (cb: (info: { version: string }) => void) => void
 
       // Settings
       getSettings: () => Promise<{ dataDir: string | null }>

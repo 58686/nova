@@ -2,7 +2,7 @@ import { Dispatch, SetStateAction, useState } from 'react'
 import { useLocale } from '../hooks/useLocale'
 import { Locale, pickLocale } from '../locale'
 import { AIConfig, AIProvider, PROVIDERS } from '../services/ai'
-import { RuntimeAIService } from '../services/runtimeAI'
+import { DEFAULT_SYSTEM_PROMPT, RuntimeAIService } from '../services/runtimeAI'
 import { AIConfigPreset, useAIConfigStore } from '../stores/aiConfigStore'
 
 type ConnectionResult = {
@@ -20,6 +20,7 @@ const DEFAULT_EDIT_CONFIG: AIConfig = {
   temperature: 0.7,
   maxTokens: 4096,
   timeout: 60000,
+  systemPrompt: DEFAULT_SYSTEM_PROMPT,
 }
 
 function getProviderLabel(provider: AIProvider, locale: Locale): string {
@@ -537,6 +538,34 @@ function ConfigFormCard({
           )}
         </div>
 
+        {/* ── Advanced: System Prompt (collapsible) ── */}
+        <details className="group">
+          <summary
+            className="flex cursor-pointer items-center gap-1.5 text-xs select-none"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            <svg className="h-3 w-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            {text('高级设置', 'Advanced')}
+          </summary>
+          <div className="mt-2 space-y-2">
+            <label className="block text-xs" style={{ color: 'var(--text-secondary)' }}>
+              {text('系统提示词 (System Prompt)', 'System Prompt')}
+            </label>
+            <textarea
+              className="input min-h-[80px] px-3 py-2 text-xs leading-relaxed resize-y"
+              value={editConfig.systemPrompt || ''}
+              onChange={(event) => onConfigChange((prev) => ({ ...prev, systemPrompt: event.target.value || undefined }))}
+              placeholder={text(
+                '留空使用默认提示词。自定义提示词会完全替换默认值，请确保包含必要的输出格式要求。',
+                'Leave empty for default. A custom prompt replaces the default entirely — make sure to include output format instructions.',
+              )}
+              rows={4}
+            />
+          </div>
+        </details>
+
         <div className="flex gap-2">
           <button onClick={onPrimaryAction} className="btn btn-primary text-xs">
             {primaryLabel}
@@ -559,11 +588,11 @@ function maskApiKey(rawValue: string, visible: boolean): string {
 function getDefaultModels(provider: AIProvider): string[] {
   switch (provider) {
     case 'anthropic':
-      return ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307', 'claude-3-5-haiku-20241022']
+      return ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-opus-4-5', 'claude-sonnet-4-5', 'claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307', 'claude-3-5-haiku-20241022']
     case 'openai':
       return ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo']
     case 'openrouter':
-      return ['anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'google/gemini-pro-1.5']
+      return ['anthropic/claude-opus-4-8', 'anthropic/claude-sonnet-4-6', 'anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'google/gemini-pro-1.5']
     case 'nvidia':
       return ['meta/llama-3.1-70b-instruct', 'meta/llama-3.1-8b-instruct', 'mistralai/mixtral-8x22b-instruct-v0.1']
     case 'deepseek':
@@ -579,7 +608,7 @@ function getDefaultModels(provider: AIProvider): string[] {
     case 'baichuan':
       return ['Baichuan4', 'Baichuan3-Turbo', 'Baichuan2-Turbo']
     case 'custom':
-      return ['gpt-4o', 'gpt-4o-mini', 'claude-3-5-sonnet', 'deepseek-coder']
+      return ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'gpt-4o', 'gpt-4o-mini', 'deepseek-coder']
     default:
       return ['gpt-4o', 'gpt-4o-mini']
   }

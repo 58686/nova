@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useLocale } from '../hooks/useLocale'
 import { Locale, pickLocale } from '../locale'
 import { RuntimeAIService } from '../services/runtimeAI'
+import { getVisibleTextLength } from '../utils/htmlUtils'
 import { useAIConfigStore } from '../stores/aiConfigStore'
 import { useAppStore } from '../stores/appStore'
 
@@ -110,20 +111,6 @@ function detectSections(html: string): DetectedSection[] {
   }
 
   return entries.sort((a, b) => a.start - b.start).map(e => e.section)
-}
-
-function getVisibleTextLength(html: string): number {
-  const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i)
-  const content = (bodyMatch?.[1] || html)
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
-    .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  return content.length
 }
 
 function isSlidePresentation(html: string): boolean {

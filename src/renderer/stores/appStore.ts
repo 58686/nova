@@ -7,7 +7,6 @@ import {
   Message,
   TestResult,
   deletePreset,
-  getAIService,
   getPresets,
   savePreset,
 } from '../services/ai'
@@ -100,10 +99,6 @@ interface AppState {
   applyPreset: (presetId: string) => void
   saveCurrentAsPreset: (name: string, description?: string) => void
   deletePreset: (id: string) => void
-
-  testResult: TestResult | null
-  isTesting: boolean
-  testConnection: () => Promise<void>
 
   currentProject: Project | null
   setCurrentProject: (project: Project | null) => void
@@ -273,7 +268,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   updateAIConfig: (config) => {
     const newConfig = { ...get().aiConfig, ...config }
     set({ aiConfig: newConfig })
-    getAIService().updateConfig(newConfig)
     localStorage.setItem('nova-ai-config', JSON.stringify(newConfig))
   },
 
@@ -309,22 +303,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   deletePreset: (id) => {
     deletePreset(id)
     set({ presets: getPresets() })
-  },
-
-  testResult: null,
-  isTesting: false,
-  testConnection: async () => {
-    set({ isTesting: true, testResult: null })
-
-    try {
-      const result = await getAIService().testConnection()
-      set({ testResult: result, isTesting: false })
-    } catch (error: unknown) {
-      set({
-        testResult: { success: false, error: error instanceof Error ? error.message : String(error) },
-        isTesting: false,
-      })
-    }
   },
 
   currentProject: null,

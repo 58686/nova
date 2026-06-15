@@ -45,12 +45,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateAvailable: (cb: (info: { version: string }) => void) => {
     ipcRenderer.on('update-available', (_, info) => cb(info))
   },
-  onUpdateProgress: (cb: (info: { percent: number }) => void) => {
-    ipcRenderer.on('update-progress', (_, info) => cb(info))
-  },
-  onUpdateDownloaded: (cb: (info: { version: string }) => void) => {
-    ipcRenderer.on('update-downloaded', (_, info) => cb(info))
-  },
 
   // Project file I/O
   createProjectDir: () =>
