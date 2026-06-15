@@ -1,55 +1,50 @@
-name: Release
+﻿name: Release
 
 on:
   push:
     tags:
-      - 'v*'
-
-permissions:
-  contents: write
+      - 'v*.*.*'
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-          - os: macos-latest
-
-    runs-on: ${{ matrix.os }}
-
-    defaults:
-      run:
-        shell: bash
+  build-and-release:
+    runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '18'
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build renderer
-        run: npm run build
+      - name: Run tests
+        run: npm run test:run
 
-      - name: Build Electron main/preload
-        run: npm run electron:compile
-
-      - name: Package desktop app
-        run: npx electron-builder --publish=never
+      - name: Build Electron app
+        run: npm run electron:build
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
 
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Generate checksums
+        run: |
+          Get-FileHash release\Nova-Setup-*.exe -Algorithm SHA256 | Select-Object Hash, @{Name="File";Expression={$_.Path | Split-Path -Leaf}} | Out-File -FilePath checksums.txt
+          Get-FileHash release\Nova-*-win.zip -Algorithm SHA256 | Select-Object Hash, @{Name="File";Expression={$_.Path | Split-Path -Leaf}} | Out-File -FilePath checksums.txt -Append
+        shell: pwsh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
         with:
           files: |
-            release/**/*.exe
-            release/**/*.dmg
-            release/**/*.yml
-            release/**/*.blockmap
+            release/Nova-Setup-*.exe
+            release/Nova-*-win.zip
+            checksums.txt
+          body_path: RELEASE_NOTES_v0.3.0.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

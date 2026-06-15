@@ -70,6 +70,7 @@
     },
     "win": {
       "requestedExecutionLevel": "asInvoker",
+      "sign": null,
       "target": [
         {
           "target": "nsis",
