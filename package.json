@@ -51,6 +51,7 @@
   "build": {
     "appId": "com.devui.app",
     "productName": "Nova",
+    "publish": null,
     "directories": {
       "output": "release"
     },
