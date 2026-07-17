@@ -21,9 +21,12 @@ import {
 export function useGenerationEngine() {
   const isGenerating = useGenerationStore(s => s.isGenerating)
   const { locale, text } = useLocale()
-  const { getActiveConfig } = useAIConfigStore()
+  const { presets, activePresetId, isInitialized, getActiveConfig } = useAIConfigStore()
 
-  const runtimeConfig = useMemo(() => getActiveConfig(), [getActiveConfig])
+  const runtimeConfig = useMemo(
+    () => getActiveConfig(),
+    [activePresetId, getActiveConfig, isInitialized, presets],
+  )
   const isZh = locale === 'zh-CN'
   const pageTypeConfigs = useMemo(() => PAGE_TYPE_CONFIGS(isZh), [isZh])
   const briefForm = useGenerationStore(s => s.briefForm)

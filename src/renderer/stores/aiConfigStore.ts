@@ -130,6 +130,14 @@ function savePresetsDebounced(presets: AIConfigPreset[]) {
   }, 500)
 }
 
+function persistActivePreset(id: string | null) {
+  if (id) {
+    localStorage.setItem('nova-active-preset', id)
+  } else {
+    localStorage.removeItem('nova-active-preset')
+  }
+}
+
 export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
   presets: loadPresets(),
   activePresetId: localStorage.getItem('nova-active-preset') || null,
@@ -161,20 +169,39 @@ export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
       id: nanoid(),
       name,
       config,
-      isActive: false,
+      isActive: true,
       createdAt: Date.now(),
     }
 
-    const presets = [...get().presets, newPreset]
-    set({ presets })
+    const presets = [
+      ...get().presets.map(p => ({ ...p, isActive: false })),
+      newPreset,
+    ]
+    set({ presets, activePresetId: newPreset.id })
+    persistActivePreset(newPreset.id)
     savePresetsDebounced(presets) // Use encrypted save
   },
   
   updatePreset: (id, updates) => {
-    const presets = get().presets.map(p =>
+    const currentState = get()
+    const currentActive = currentState.presets.find(p => p.id === currentState.activePresetId)
+    const currentTarget = currentState.presets.find(p => p.id === id)
+    const nextTarget = currentTarget ? { ...currentTarget, ...updates } : null
+    const targetHasApiKey = Boolean(nextTarget?.config.apiKey)
+    const shouldActivate =
+      currentState.activePresetId === id ||
+      ((!currentState.activePresetId || !currentActive?.config.apiKey) && targetHasApiKey)
+
+    const presets = currentState.presets.map(p =>
       p.id === id ? { ...p, ...updates } : p
-    )
-    set({ presets })
+    ).map(p => ({
+      ...p,
+      isActive: shouldActivate ? p.id === id : p.isActive,
+    }))
+    const activePresetId = shouldActivate ? id : currentState.activePresetId
+
+    set({ presets, activePresetId })
+    persistActivePreset(activePresetId)
     savePresetsDebounced(presets) // Use encrypted save
   },
 
@@ -185,11 +212,7 @@ export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
     set({ presets, activePresetId })
     savePresetsDebounced(presets) // Use encrypted save
     
-    if (activePresetId) {
-      localStorage.setItem('nova-active-preset', activePresetId)
-    } else {
-      localStorage.removeItem('nova-active-preset')
-    }
+    persistActivePreset(activePresetId)
   },
   
   setActivePreset: (id) => {
@@ -200,7 +223,7 @@ export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
 
     set({ presets, activePresetId: id })
     savePresetsDebounced(presets) // Use encrypted save
-    localStorage.setItem('nova-active-preset', id)
+    persistActivePreset(id)
   },
   
   getActiveConfig: () => {

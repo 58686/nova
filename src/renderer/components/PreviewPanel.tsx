@@ -238,8 +238,11 @@ export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
     })))
   const { setError, setSuccess } = useUIStore(useShallow((s) => ({ setError: s.setError, setSuccess: s.setSuccess })))
   const { isGenerating, generatedCode, setGeneratedCode } = useGenerationStore(useShallow((s) => ({ isGenerating: s.isGenerating, generatedCode: s.generatedCode, setGeneratedCode: s.setGeneratedCode })))
-  const { getActiveConfig } = useAIConfigStore()
-  const runtimeConfig = useMemo(() => getActiveConfig(), [getActiveConfig])
+  const { presets, activePresetId, isInitialized, getActiveConfig } = useAIConfigStore()
+  const runtimeConfig = useMemo(
+    () => getActiveConfig(),
+    [activePresetId, getActiveConfig, isInitialized, presets],
+  )
   const { locale, text } = useLocale()
   const [viewportMode, setViewportMode] = useState<ViewportMode>('desktop')
   const [frameKey, setFrameKey] = useState(0)
