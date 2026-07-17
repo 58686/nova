@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "electron:compile": "vite build --config vite.electron.config.ts",
     "electron:dev": "npm run electron:compile && concurrently \"npm run dev\" \"node scripts/electron-launcher.js\"",
-    "electron:build": "vite build --config vite.electron.config.ts && electron-builder",
+    "electron:build": "npm run build && vite build --config vite.electron.config.ts && electron-builder",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
