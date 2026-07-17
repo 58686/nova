@@ -1,19 +1,26 @@
 import { useEffect } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '../stores/appStore'
+import { useUIStore } from '../stores/uiStore'
+import { useGenerationStore } from '../stores/generationStore'
 import { commandHistory } from '../services/commandHistory'
 
 export function useKeyboard() {
   const {
     toggleSettings,
-    toggleSidebar,
-    cancelGeneration,
-    isGenerating,
     showSettings,
+    toggleSidebar,
     togglePreviewFocus,
-    versions,
-    activeVersionId,
-    restoreVersion,
-  } = useAppStore()
+  } = useUIStore(useShallow(s => ({
+    toggleSettings: s.toggleSettings,
+    showSettings: s.showSettings,
+    toggleSidebar: s.toggleSidebar,
+    togglePreviewFocus: s.togglePreviewFocus,
+  })))
+  const { isGenerating, cancelGeneration } = useGenerationStore(useShallow(s => ({
+    isGenerating: s.isGenerating,
+    cancelGeneration: s.cancelGeneration,
+  })))
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -49,11 +56,22 @@ export function useKeyboard() {
       }
 
       if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
-        // Undo command
+        // Undo: prefer command history, fall back to version history
         const target = event.target as HTMLElement
         if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') {
           event.preventDefault()
-          commandHistory.undo()
+          if (commandHistory.canUndo()) {
+            commandHistory.undo()
+          } else {
+            // Fall back to version history: restore the previous version
+            const { versions, activeVersionId, restoreVersion } = useAppStore.getState()
+            if (versions.length > 0 && activeVersionId) {
+              const idx = versions.findIndex(v => v.id === activeVersionId)
+              if (idx > 0) {
+                restoreVersion(versions[idx - 1].id)
+              }
+            }
+          }
         }
       }
 
@@ -69,7 +87,7 @@ export function useKeyboard() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [toggleSettings, toggleSidebar, cancelGeneration, isGenerating, showSettings, togglePreviewFocus, versions, activeVersionId, restoreVersion])
+  }, [toggleSettings, toggleSidebar, cancelGeneration, isGenerating, showSettings, togglePreviewFocus])
 }
 
 export const SHORTCUTS = [

@@ -58,3 +58,33 @@ export function looksLikeBlankShell(html: string): boolean {
     (scriptCount >= 1 && hasDelayedReveal && visibleTextLength < 140)
   )
 }
+
+export function looksIncompleteGeneratedHTML(html: string): boolean {
+  const trimmed = html.trim()
+  if (!trimmed) return true
+
+  const hasHtmlStart = /<html[\s>]/i.test(trimmed) || /<!doctype html>/i.test(trimmed)
+  if (hasHtmlStart && !/<\/html>\s*$/i.test(trimmed)) return true
+  if (/<body[\s>]/i.test(trimmed) && !/<\/body>/i.test(trimmed)) return true
+  if (/<style[\s>]/i.test(trimmed) && !/<\/style>/i.test(trimmed)) return true
+  if (/<script[\s>]/i.test(trimmed) && !/<\/script>/i.test(trimmed)) return true
+
+  const styleBlocks = [...trimmed.matchAll(/<style[^>]*>([\s\S]*?)(?:<\/style>|<\/html>|$)/gi)]
+  return styleBlocks.some((match) => {
+    const css = match[1] || ''
+    let depth = 0
+    for (const char of css) {
+      if (char === '{') depth += 1
+      if (char === '}') depth -= 1
+      if (depth < 0) return true
+    }
+
+    const lastLine = css
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .pop() || ''
+
+    return depth !== 0 || /[{:,]\s*$/.test(lastLine)
+  })
+}

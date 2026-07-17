@@ -19,7 +19,7 @@ const DEFAULT_EDIT_CONFIG: AIConfig = {
   model: 'gpt-4o',
   temperature: 0.7,
   maxTokens: 16384,
-  timeout: 60000,
+  timeout: 300000,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
 }
 
@@ -392,6 +392,7 @@ function ConfigFormCard({
 }: ConfigFormCardProps) {
   const { locale, text } = useLocale()
   const [showApiKey, setShowApiKey] = useState(false)
+  const selectedModelFromList = fetchedModels.includes(editConfig.model) ? editConfig.model : ''
 
   return (
     <div
@@ -509,27 +510,41 @@ function ConfigFormCard({
             </button>
           </div>
 
-          {fetchedModels.length > 0 ? (
+          {fetchedModels.length > 0 && (
             <select
-              value={editConfig.model}
-              onChange={(event) => onConfigChange((prev) => ({ ...prev, model: event.target.value }))}
+              value={selectedModelFromList}
+              onChange={(event) => {
+                if (event.target.value) {
+                  onConfigChange((prev) => ({ ...prev, model: event.target.value }))
+                }
+              }}
               className="input text-sm"
             >
+              {!selectedModelFromList && (
+                <option value="">
+                  {editConfig.model ? text('自定义模型', 'Custom model') : text('请选择模型', 'Select a model')}
+                </option>
+              )}
               {fetchedModels.map((model) => (
                 <option key={model} value={model}>
                   {model}
                 </option>
               ))}
             </select>
-          ) : (
+          )}
+
+          <div className={fetchedModels.length > 0 ? 'mt-2' : undefined}>
+            <label className="mb-1 block text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              {text('自定义模型 ID', 'Custom model ID')}
+            </label>
             <input
               type="text"
               value={editConfig.model}
               onChange={(event) => onConfigChange((prev) => ({ ...prev, model: event.target.value }))}
-              placeholder={text('模型名称', 'Model name')}
+              placeholder={text('模型 ID，例如：gpt-4o、deepseek-chat', 'Model ID, e.g. gpt-4o or deepseek-chat')}
               className="input text-sm"
             />
-          )}
+          </div>
 
           {fetchError && (
             <p className="mt-1 text-[10px]" style={{ color: '#f59e0b' }}>
@@ -550,6 +565,25 @@ function ConfigFormCard({
             {text('高级设置', 'Advanced')}
           </summary>
           <div className="mt-2 space-y-2">
+            <div>
+              <label className="mb-1 block text-xs" style={{ color: 'var(--text-secondary)' }}>
+                {text('请求超时（秒）', 'Request timeout (seconds)')}
+              </label>
+              <input
+                type="number"
+                min={10}
+                max={900}
+                step={10}
+                value={Math.round((editConfig.timeout || DEFAULT_EDIT_CONFIG.timeout || 300000) / 1000)}
+                onChange={(event) => {
+                  const seconds = Number(event.target.value)
+                  const clampedSeconds = Number.isFinite(seconds) ? Math.min(900, Math.max(10, seconds)) : 300
+                  onConfigChange((prev) => ({ ...prev, timeout: clampedSeconds * 1000 }))
+                }}
+                className="input text-sm"
+              />
+            </div>
+
             <label className="block text-xs" style={{ color: 'var(--text-secondary)' }}>
               {text('系统提示词 (System Prompt)', 'System Prompt')}
             </label>

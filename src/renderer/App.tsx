@@ -1,28 +1,35 @@
-import { useEffect, useState } from 'react'
-import AIConfigManager from './components/AIConfigManager'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import ErrorBoundary from './components/ErrorBoundary'
-import APITester from './components/APITester'
-import CanvasView from './components/CanvasView'
 import ChatPanel from './components/ChatPanel'
 import Header from './components/Header'
 import PreviewPanel from './components/PreviewPanel'
-import SettingsModal from './components/SettingsModal'
 import Sidebar from './components/Sidebar'
 import ToastContainer from './components/ToastContainer'
-import VersionHistory from './components/VersionHistory'
 import { useLocale } from './hooks/useLocale'
 import { useKeyboard } from './hooks/useKeyboard'
-import { useAppStore } from './stores/appStore'
+import { useUIStore } from './stores/uiStore'
+import { useGenerationStore } from './stores/generationStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { useAIConfigStore } from './stores/aiConfigStore'
 import { migrateSecureData } from './services/secureDataMigration'
+
+const AIConfigManager = lazy(() => import('./components/AIConfigManager'))
+const APITester = lazy(() => import('./components/APITester'))
+const CanvasView = lazy(() => import('./components/CanvasView'))
+const SettingsModal = lazy(() => import('./components/SettingsModal'))
+const VersionHistory = lazy(() => import('./components/VersionHistory'))
 
 type RightPanel = 'preview' | 'versions' | 'canvas'
 type ModalPanel = 'ai-config' | 'settings' | null
 
 function App() {
-  const { showSidebar, generatedCode, isPreviewFocused, setPreviewFocused } = useAppStore()
+  const showSidebar = useUIStore(s => s.showSidebar)
+  const isPreviewFocused = useUIStore(s => s.isPreviewFocused)
+  const setPreviewFocused = useUIStore(s => s.setPreviewFocused)
+  const generatedCode = useGenerationStore(s => s.generatedCode)
   const { locale, text } = useLocale()
   const { load: loadSettings } = useSettingsStore()
+  const { initializeSecureStore } = useAIConfigStore()
   const [rightPanel, setRightPanel] = useState<RightPanel>('preview')
   const [modalPanel, setModalPanel] = useState<ModalPanel>(null)
 
@@ -30,10 +37,16 @@ function App() {
 
   useEffect(() => {
     loadSettings()
-    // Migrate sensitive data to encrypted storage
-    migrateSecureData().catch(err => {
-      console.error('Failed to migrate secure data:', err)
-    })
+    // Migrate sensitive data to encrypted storage, then load encrypted AI presets
+    migrateSecureData()
+      .catch(err => {
+        console.error('Failed to migrate secure data:', err)
+      })
+      .finally(() => {
+        initializeSecureStore().catch(err => {
+          console.error('Failed to load secure AI presets:', err)
+        })
+      })
   }, [])
 
   const hasGeneratedCode = generatedCode.trim().length > 0
@@ -86,7 +99,7 @@ function App() {
             {showFocusedPreview ? (
               <ErrorBoundary label="Preview"><PreviewPanel focused /></ErrorBoundary>
             ) : rightPanel === 'canvas' ? (
-              <CanvasView onSwitchToPreview={() => setRightPanel('preview')} />
+              <Suspense fallback={null}><CanvasView onSwitchToPreview={() => setRightPanel('preview')} /></Suspense>
             ) : rightPanel === 'preview' ? (
               <ErrorBoundary label="Preview"><PreviewPanel /></ErrorBoundary>
             ) : (
@@ -101,7 +114,7 @@ function App() {
                     </h2>
                   </div>
                   <div className="min-h-0 flex-1 overflow-hidden">
-                    <VersionHistory />
+                    <Suspense fallback={null}><VersionHistory /></Suspense>
                   </div>
                 </section>
                 <ErrorBoundary label="Preview"><PreviewPanel /></ErrorBoundary>
@@ -149,10 +162,10 @@ function App() {
                 className="min-h-0 min-w-0 flex-1 overflow-y-auto border-b xl:border-b-0 xl:border-r"
                 style={{ borderColor: 'var(--border-subtle)' }}
               >
-                <AIConfigManager />
+                <Suspense fallback={null}><AIConfigManager /></Suspense>
               </div>
               <aside className="min-h-[260px] w-full shrink-0 overflow-y-auto p-4 md:p-5 xl:w-[360px]">
-                <APITester />
+                <Suspense fallback={null}><APITester /></Suspense>
               </aside>
             </div>
           </div>
@@ -160,7 +173,7 @@ function App() {
       )}
 
       {modalPanel === 'settings' && (
-        <SettingsModal onClose={() => setModalPanel(null)} />
+        <Suspense fallback={null}><SettingsModal onClose={() => setModalPanel(null)} /></Suspense>
       )}
 
       <ToastContainer />

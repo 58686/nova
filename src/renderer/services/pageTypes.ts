@@ -1,4 +1,3 @@
-import { Locale } from '../locale'
 import { BriefFormState } from '../stores/appStore'
 
 export type PageType = 'landing' | 'app' | 'email' | 'ecommerce' | 'portfolio' | 'component' | 'slide'
@@ -530,7 +529,7 @@ const SLIDE_FIELDS: BriefField[] = [
 
 // ── Prompt builders per type ──────────────────────────────────────────────────
 
-const HTML_SAFETY_RULES = `
+export const HTML_SAFETY_RULES = `
 CRITICAL HTML OUTPUT RULES — MUST FOLLOW:
 1. Output a single, complete, self-contained HTML document starting with <!DOCTYPE html>.
 2. Every HTML element MUST use a real HTML tag name (div, span, nav, aside, main, header, section, ul, li, button, etc.). NEVER write angle-bracket syntax as visible text content.
@@ -543,7 +542,7 @@ CRITICAL HTML OUTPUT RULES — MUST FOLLOW:
 9. Use realistic, plausible mock content — never write "[placeholder]", "Lorem ipsum", or "TODO" as visible text.
 10. Images must be CSS gradient backgrounds or inline SVG — never use broken <img src=""> with fake URLs.`.trim()
 
-const VISUAL_QUALITY_RULES = `
+export const VISUAL_QUALITY_RULES = `
 VISUAL DESIGN REQUIREMENTS — make this page genuinely beautiful:
 
 TYPOGRAPHY (mandatory):

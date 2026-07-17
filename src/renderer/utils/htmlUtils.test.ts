@@ -3,6 +3,7 @@ import {
   getVisibleTextLength,
   getScriptCount,
   getCanvasCount,
+  looksIncompleteGeneratedHTML,
   looksLikeBlankShell,
 } from '../utils/htmlUtils'
 
@@ -118,6 +119,36 @@ describe('htmlUtils', () => {
     it('should NOT flag if no body tag', () => {
       const html = '<div>No body wrapper</div>'
       expect(looksLikeBlankShell(html)).toBe(true)
+    })
+  })
+
+  describe('looksIncompleteGeneratedHTML', () => {
+    it('should detect CSS cut off inside a rule', () => {
+      const html = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <style>
+              .feature-card:hover { transform: translateY(-4px); }
+              .feature-icon {
+          </html>
+      `
+
+      expect(looksIncompleteGeneratedHTML(html)).toBe(true)
+    })
+
+    it('should allow complete static HTML', () => {
+      const html = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <style>.feature-icon { color: #111; }</style>
+          </head>
+          <body><main><h1>Done</h1></main></body>
+        </html>
+      `
+
+      expect(looksIncompleteGeneratedHTML(html)).toBe(false)
     })
   })
 })

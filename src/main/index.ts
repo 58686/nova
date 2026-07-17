@@ -140,17 +140,17 @@ function isUrlSafe(urlString: string): boolean {
     return false
   }
 
-  // Only allow https (or http for localhost in dev)
-  if (url.protocol !== 'https:' && !(process.env.NODE_ENV === 'development' && url.protocol === 'http:')) {
+  // Allow https always; allow http only for localhost (local LLMs like Ollama, LM Studio)
+  const hostname = url.hostname.toLowerCase()
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname.startsWith('127.')
+
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLocalhost)) {
     return false
   }
 
-  // Block private IP ranges and localhost
-  const hostname = url.hostname.toLowerCase()
-
-  // Block localhost variants
-  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname.startsWith('127.')) {
-    return false
+  // Allow localhost / loopback for local LLM providers
+  if (isLocalhost) {
+    return true
   }
 
   // Block private IPv4 ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16
@@ -165,8 +165,6 @@ function isUrlSafe(urlString: string): boolean {
     if (a === 192 && b === 168) return false
     // 169.254.0.0/16 (link-local, AWS metadata)
     if (a === 169 && b === 254) return false
-    // 127.0.0.0/8 (loopback)
-    if (a === 127) return false
     // 0.0.0.0/8 (this network)
     if (a === 0) return false
     // 100.64.0.0/10 (shared address space)
@@ -174,8 +172,8 @@ function isUrlSafe(urlString: string): boolean {
   }
 
   // Block link-local and private IPv6
-  // fe80::/10 (link-local), fc00::/7 (unique local), ::1 (loopback)
-  if (hostname.startsWith('fe80:') || hostname.startsWith('fc00:') || hostname.startsWith('fd00:') || hostname === '::1') {
+  // fe80::/10 (link-local), fc00::/7 (unique local)
+  if (hostname.startsWith('fe80:') || hostname.startsWith('fc00:') || hostname.startsWith('fd00:')) {
     return false
   }
 
@@ -220,11 +218,12 @@ ipcMain.handle(
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       try {
-        while (true) {
-          const { done, value } = await reader.read()
+        let done = false
+        while (!done && !event.sender.isDestroyed()) {
+          const result = await reader.read()
+          done = result.done
           if (done) break
-          if (event.sender.isDestroyed()) break
-          event.sender.send(`proxy-stream-chunk:${payload.id}`, decoder.decode(value, { stream: true }))
+          event.sender.send(`proxy-stream-chunk:${payload.id}`, decoder.decode(result.value, { stream: true }))
         }
       } finally {
         reader.releaseLock()
@@ -305,8 +304,13 @@ ipcMain.handle('open-in-browser', async (event, html: string) => {
     fs.writeFileSync(tmpFile, html, 'utf-8')
     const fileUrl = 'file:///' + tmpFile.replace(/\\/g, '/')
     await shell.openExternal(fileUrl)
+    // Clean up temp file after 60s (give browser time to load)
+    setTimeout(() => {
+      try { fs.unlinkSync(tmpFile) } catch { /* file may already be removed */ }
+    }, 60000)
     return { success: true }
   } catch (error: any) {
+    try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
     return { success: false, error: error?.message || 'Failed to open in browser' }
   }
 })
@@ -379,6 +383,27 @@ ipcMain.handle('select-data-dir', async () => {
 
 // ── Project file I/O ──────────────────────────────────────────────────────────
 
+/**
+ * Sanitize a file name or relative path to prevent path traversal attacks.
+ * Strips .. segments, null bytes, and absolute path prefixes.
+ * Allows subdirectory separators (e.g. "versions/abc.html") but only relative to the project dir.
+ */
+function sanitizeFilePath(fileName: string): string {
+  // Remove null bytes
+  let cleaned = fileName.replace(/\0/g, '')
+  // Normalize backslashes to forward slashes
+  cleaned = cleaned.replace(/\\/g, '/')
+  // Split into segments, filter out "." and ".."
+  const segments = cleaned.split('/').filter((seg) => seg && seg !== '.' && seg !== '..')
+  // Rejoin — result is always relative
+  return segments.join('/')
+}
+
+/** Validate that a project directory name is safe (only digits, since we generate timestamp-based names) */
+function isSafeDirName(name: string): boolean {
+  return /^\d{14}$/.test(name)
+}
+
 ipcMain.handle('create-project-dir', () => {
   const settings = loadSettings()
   if (!settings.dataDir) return null
@@ -395,8 +420,17 @@ ipcMain.handle('create-project-dir', () => {
 ipcMain.handle('write-project-file', (event, payload: { projectDirName: string; fileName: string; content: string }) => {
   const settings = loadSettings()
   if (!settings.dataDir) return { success: false, error: 'No data directory configured' }
+  if (!isSafeDirName(payload.projectDirName)) return { success: false, error: 'Invalid project directory name' }
 
-  const filePath = path.join(settings.dataDir, payload.projectDirName, payload.fileName)
+  const safeFileName = sanitizeFilePath(payload.fileName)
+  if (!safeFileName) return { success: false, error: 'Invalid file name' }
+
+  const filePath = path.join(settings.dataDir, payload.projectDirName, safeFileName)
+  // Verify the resolved path is still inside the project directory
+  const projectRoot = path.join(settings.dataDir, payload.projectDirName)
+  if (!filePath.startsWith(projectRoot + path.sep) && filePath !== projectRoot) {
+    return { success: false, error: 'Path traversal detected' }
+  }
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   fs.writeFileSync(filePath, payload.content, 'utf-8')
   return { success: true }
@@ -405,9 +439,18 @@ ipcMain.handle('write-project-file', (event, payload: { projectDirName: string; 
 ipcMain.handle('read-project-file', (event, payload: { projectDirName: string; fileName: string }) => {
   const settings = loadSettings()
   if (!settings.dataDir) return null
+  if (!isSafeDirName(payload.projectDirName)) return null
 
+  const safeFileName = sanitizeFilePath(payload.fileName)
+  if (!safeFileName) return null
+
+  const filePath = path.join(settings.dataDir, payload.projectDirName, safeFileName)
+  const projectRoot = path.join(settings.dataDir, payload.projectDirName)
+  if (!filePath.startsWith(projectRoot + path.sep) && filePath !== projectRoot) {
+    return null
+  }
   try {
-    return fs.readFileSync(path.join(settings.dataDir, payload.projectDirName, payload.fileName), 'utf-8')
+    return fs.readFileSync(filePath, 'utf-8')
   } catch {
     return null
   }

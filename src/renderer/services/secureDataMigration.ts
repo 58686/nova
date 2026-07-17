@@ -13,12 +13,21 @@ export async function migrateSecureData(): Promise<void> {
   console.log('Starting secure data migration...')
 
   let migratedCount = 0
+  let alreadyEncryptedCount = 0
   for (const key of SECURE_KEYS) {
+    const stored = localStorage.getItem(key)
+    if (!stored) continue
+
+    if (stored.startsWith('enc:')) {
+      alreadyEncryptedCount++
+      continue
+    }
+
     const success = await migrateToEncrypted(key)
     if (success) migratedCount++
   }
 
-  console.log(`Migrated ${migratedCount}/${SECURE_KEYS.length} keys to encrypted storage`)
+  console.log(`Secure storage: ${migratedCount} migrated, ${alreadyEncryptedCount} already encrypted, ${SECURE_KEYS.length - migratedCount - alreadyEncryptedCount} failed/missing`)
 }
 
 /**

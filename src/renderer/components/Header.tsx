@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useLocale } from '../hooks/useLocale'
 import { useAIConfigStore } from '../stores/aiConfigStore'
 import { useAppStore } from '../stores/appStore'
+import { useUIStore } from '../stores/uiStore'
+import { useGenerationStore } from '../stores/generationStore'
 
 type UpdateState =
   | { status: 'idle' }
@@ -39,13 +42,19 @@ interface HeaderProps {
 export default function Header({ activePanel = 'preview', onToggleVersions, onToggleCanvas, onOpenAIConfig, onOpenSettings }: HeaderProps) {
   const {
     currentProject,
-    generatedCode,
     projects,
     setCurrentProject,
-    toggleSidebar,
-    isPreviewFocused,
-    togglePreviewFocus,
-  } = useAppStore()
+  } = useAppStore(useShallow(s => ({
+    currentProject: s.currentProject,
+    projects: s.projects,
+    setCurrentProject: s.setCurrentProject,
+  })))
+  const { toggleSidebar, isPreviewFocused, togglePreviewFocus } = useUIStore(useShallow(s => ({
+    toggleSidebar: s.toggleSidebar,
+    isPreviewFocused: s.isPreviewFocused,
+    togglePreviewFocus: s.togglePreviewFocus,
+  })))
+  const generatedCode = useGenerationStore(s => s.generatedCode)
   const { presets, activePresetId, getActiveConfig } = useAIConfigStore()
   const { locale, text, toggleLocale } = useLocale()
 

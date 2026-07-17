@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Locale, pickLocale } from '../locale'
 import { useLocale } from '../hooks/useLocale'
 import { useAppStore } from '../stores/appStore'
@@ -34,7 +35,13 @@ function diffStats(codeA: string, codeB: string) {
 }
 
 export default function VersionHistory() {
-  const { versions, restoreVersion, deleteVersion, currentProject, activeVersionId } = useAppStore()
+  const { versions, restoreVersion, deleteVersion, currentProject, activeVersionId } = useAppStore(useShallow(s => ({
+    versions: s.versions,
+    restoreVersion: s.restoreVersion,
+    deleteVersion: s.deleteVersion,
+    currentProject: s.currentProject,
+    activeVersionId: s.activeVersionId,
+  })))
   const { locale, text } = useLocale()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
 

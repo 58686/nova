@@ -12,9 +12,12 @@ npm run build        # TypeScript check + Vite production build
 npm run electron:build # Package Electron app (outputs to release/)
 npm run lint         # ESLint (src only, max-warnings: 0)
 npm run typecheck    # TypeScript type check without emitting
+npm run test:run     # Run Vitest test suite once (29 tests across runtimeAI, commands, etc.)
+npm run test         # Run Vitest in watch mode
+npm run test:coverage # Run tests with coverage report
 ```
 
-No test suite exists in this project.
+Tests use Vitest with @testing-library/react. Test files live alongside source as `*.test.ts(x)`.
 
 ## Known System Issue: ELECTRON_RUN_AS_NODE
 

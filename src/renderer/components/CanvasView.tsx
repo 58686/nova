@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useLocale } from '../hooks/useLocale'
 import { DeviceType, Page, useAppStore } from '../stores/appStore'
 
@@ -10,7 +11,7 @@ const DEVICE_CONFIGS = {
   desktop: { label: 'Desktop', labelZh: '桌面', srcW: 1280, srcH: 800, cardW: 400, bezel: 8, radius: 8, headerH: 32, footerH: 0 },
 } as const
 
-const NAV_SCRIPT = `<script data-nova-nav>(function(){document.addEventListener('click',function(e){var a=e.target.closest('a[href]');if(!a)return;var h=a.getAttribute('href');if(!h||h.startsWith('#')||h.startsWith('javascript:')||h.startsWith('mailto:')||h.startsWith('tel:')||/^https?:\/\//.test(h))return;e.preventDefault();window.parent.postMessage({type:'nova-navigate',href:h},'*');},true);})();<\/script>`
+const NAV_SCRIPT = `<script data-nova-nav>(function(){document.addEventListener('click',function(e){var a=e.target.closest('a[href]');if(!a)return;var h=a.getAttribute('href');if(!h||h.startsWith('#')||h.startsWith('javascript:')||h.startsWith('mailto:')||h.startsWith('tel:')||/^https?:\\/\\//.test(h))return;e.preventDefault();window.parent.postMessage({type:'nova-navigate',href:h},'*');},true);})();</script>`
 
 function buildDoc(code: string): string {
   if (!code.trim()) return ''
@@ -271,7 +272,13 @@ interface CanvasViewProps {
 }
 
 export default function CanvasView({ onSwitchToPreview }: CanvasViewProps) {
-  const { projectPages, currentPageId, setCurrentPage, addPage, currentProject } = useAppStore()
+  const { projectPages, currentPageId, setCurrentPage, addPage, currentProject } = useAppStore(useShallow(s => ({
+    projectPages: s.projectPages,
+    currentPageId: s.currentPageId,
+    setCurrentPage: s.setCurrentPage,
+    addPage: s.addPage,
+    currentProject: s.currentProject,
+  })))
   const { text } = useLocale()
 
   const [deviceType, setDeviceType] = useState<DeviceType>('mobile')

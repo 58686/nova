@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useLocale } from '../hooks/useLocale'
-import { useAppStore } from '../stores/appStore'
+import { useUIStore } from '../stores/uiStore'
 
 type ToastType = 'error' | 'success' | 'warning' | 'info'
 
@@ -12,7 +12,8 @@ interface Toast {
 }
 
 export default function ToastContainer() {
-  const { error, setError, success, setSuccess } = useAppStore()
+  const error = useUIStore(s => s.error)
+  const success = useUIStore(s => s.success)
   const { text } = useLocale()
   const [toasts, setToasts] = useState<Toast[]>([])
 

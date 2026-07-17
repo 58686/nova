@@ -5,12 +5,18 @@ import {
   ConfigPreset,
   DEFAULT_PRESETS,
   Message,
-  TestResult,
   deletePreset,
   getPresets,
   savePreset,
 } from '../services/ai'
 import { DEFAULT_LOCALE, Locale, pickLocale } from '../locale'
+import { isQuotaError, safeSetLocalStorage } from '../utils/storage'
+import { useUIStore } from './uiStore'
+import { useGenerationStore } from './generationStore'
+
+// Re-export new stores and constants for backward compatibility
+export { useUIStore } from './uiStore'
+export { useGenerationStore, DEFAULT_BRIEF_FORM } from './generationStore'
 
 export type DeviceType = 'mobile' | 'tablet' | 'desktop'
 
@@ -132,7 +138,7 @@ interface AppState {
   adoptVariantCandidate: (variantId: string) => void
 
   projects: Project[]
-  addProject: (project: Omit<Project, 'id' | 'createdAt' | 'updatedAt'>) => void
+  addProject: (project: Omit<Project, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>
   updateProject: (id: string, updates: Partial<Project>) => void
   deleteProject: (id: string) => void
 
@@ -140,38 +146,6 @@ interface AppState {
   addMessage: (message: Message) => void
   clearMessages: () => void
   loadMessages: (projectId: string) => void
-
-  isGenerating: boolean
-  setGenerating: (generating: boolean) => void
-
-  abortController: AbortController | null
-  setAbortController: (controller: AbortController | null) => void
-  cancelGeneration: () => void
-
-  generatedCode: string
-  setGeneratedCode: (code: string) => void
-  briefForm: BriefFormState
-  setBriefForm: (updates: Partial<BriefFormState>) => void
-  generationTimeline: GenerationTimelineStep[]
-  setGenerationTimeline: (steps: GenerationTimelineStep[]) => void
-  activeGenerationLabel: string | null
-  setActiveGenerationLabel: (label: string | null) => void
-
-  showSettings: boolean
-  toggleSettings: () => void
-  isPreviewFocused: boolean
-  setPreviewFocused: (focused: boolean) => void
-  togglePreviewFocus: () => void
-  showSidebar: boolean
-  toggleSidebar: () => void
-  chatCollapsed: boolean
-  toggleChatCollapsed: () => void
-
-  error: string | null
-  setError: (error: string | null) => void
-
-  success: string | null
-  setSuccess: (msg: string | null) => void
 }
 
 const DEFAULT_AI_CONFIG: AIConfig = {
@@ -181,20 +155,7 @@ const DEFAULT_AI_CONFIG: AIConfig = {
   model: 'claude-3-5-sonnet-20241022',
   temperature: 0.7,
   maxTokens: 16384,
-  timeout: 60000,
-}
-
-export const DEFAULT_BRIEF_FORM: BriefFormState = {
-  product: '',
-  audience: '',
-  goal: '',
-  sections: 'Hero, social proof, features, CTA',
-  notes: '',
-  directionId: 'editorial-premium',
-  pageType: 'landing',
-  outputLang: 'auto',
-  darkMode: false,
-  designSystemId: 'default',
+  timeout: 300000,
 }
 
 function loadLocaleFromStorage(): Locale {
@@ -224,15 +185,14 @@ function saveVersionsToStorage(projectId: string, versions: Version[]) {
   try {
     localStorage.setItem(key, JSON.stringify(versions))
   } catch (e) {
-    const isQuota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || (e as DOMException & { code?: number }).code === 22)
-    if (isQuota && versions.length > 5) {
+    if (isQuotaError(e) && versions.length > 5) {
       // Prune to most recent 5 versions and retry
       try {
         localStorage.setItem(key, JSON.stringify(versions.slice(-5)))
       } catch (retryError) {
         console.error('Failed to save versions even after pruning:', retryError)
-        const store = useAppStore.getState()
-        store.setError(pickLocale(store.locale, '版本历史保存失败，建议导出备份。', 'Failed to save version history. Export to back up.'))
+        const locale = useAppStore.getState().locale
+        useUIStore.getState().setError(pickLocale(locale, '版本历史保存失败，建议导出备份。', 'Failed to save version history. Export to back up.'))
       }
     } else {
       console.warn('Failed to save versions:', e)
@@ -265,8 +225,8 @@ function writeProjectFileSafe(projectDirName: string | undefined, fileName: stri
   }
   window.electronAPI?.writeProjectFile?.({ projectDirName, fileName, content })?.catch?.((error: unknown) => {
     console.error('Failed to write project file:', error)
-    const store = useAppStore.getState()
-    store.setError(pickLocale(store.locale, '文件保存失败，请检查磁盘空间或权限。', 'Failed to save file. Check disk space or permissions.'))
+    const locale = useAppStore.getState().locale
+    useUIStore.getState().setError(pickLocale(locale, '文件保存失败，请检查磁盘空间或权限。', 'Failed to save file. Check disk space or permissions.'))
   })
 }
 
@@ -293,15 +253,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!preset) return
 
     get().updateAIConfig(preset.config)
-    set({
-      success: pickLocale(get().locale, `已应用预设：${preset.name}`, `Applied preset: ${preset.name}`),
-    })
-    setTimeout(() => set({ success: null }), 3000)
+    useUIStore.getState().setSuccess(pickLocale(get().locale, `已应用预设：${preset.name}`, `Applied preset: ${preset.name}`))
+    setTimeout(() => useUIStore.getState().setSuccess(null), 3000)
   },
   saveCurrentAsPreset: (name, description) => {
     const trimmedName = name.trim()
     if (!trimmedName) {
-      set({ error: pickLocale(get().locale, '预设名称不能为空。', 'Preset name cannot be empty.') })
+      useUIStore.getState().setError(pickLocale(get().locale, '预设名称不能为空。', 'Preset name cannot be empty.'))
       return
     }
 
@@ -313,11 +271,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     savePreset(preset)
-    set({
-      presets: getPresets(),
-      success: pickLocale(get().locale, `预设"${name}"已保存`, `Preset "${name}" saved`),
-    })
-    setTimeout(() => set({ success: null }), 3000)
+    set({ presets: getPresets() })
+    useUIStore.getState().setSuccess(pickLocale(get().locale, `预设"${name}"已保存`, `Preset "${name}" saved`))
+    setTimeout(() => useUIStore.getState().setSuccess(null), 3000)
   },
   deletePreset: (id) => {
     deletePreset(id)
@@ -330,13 +286,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         currentProject: null,
         messages: [],
-        generatedCode: '',
         versions: [],
         activeVersionId: null,
         variantCandidates: [],
         currentPageId: null,
         projectPages: [],
       })
+      useGenerationStore.getState().setGeneratedCode('')
       return
     }
 
@@ -367,13 +323,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       currentProject: project,
       messages,
-      generatedCode: firstPage.code || '',
       versions,
       activeVersionId: versions.at(-1)?.id || null,
       variantCandidates: [],
       currentPageId: firstPage.id,
       projectPages: pages,
     })
+    useGenerationStore.getState().setGeneratedCode(firstPage.code || '')
   },
 
   currentPageId: null,
@@ -382,18 +338,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { projectPages } = get()
     const page = projectPages.find((p) => p.id === pageId)
     if (!page) return
-    set({ currentPageId: pageId, generatedCode: page.code })
+    set({ currentPageId: pageId })
+    useGenerationStore.getState().setGeneratedCode(page.code)
   },
   addPage: (name, path, deviceType = 'desktop') => {
     const { currentProject, projectPages, projects } = get()
     if (!currentProject) return
 
-    const newPage: Page = { id: nanoid(), name, path, code: '', deviceType, createdAt: Date.now(), updatedAt: Date.now() }
+    // Sanitize path: strip path traversal segments, ensure leading /
+    const safePath = '/' + path.replace(/\\/g, '/').split('/').filter((s) => s && s !== '.' && s !== '..').join('/')
+    const newPage: Page = { id: nanoid(), name, path: safePath, code: '', deviceType, createdAt: Date.now(), updatedAt: Date.now() }
     const updatedPages = [...projectPages, newPage]
     const updatedProject = { ...currentProject, pages: updatedPages }
     const updatedProjects = projects.map((p) => p.id === currentProject.id ? updatedProject : p)
 
-    set({ projectPages: updatedPages, currentProject: updatedProject, currentPageId: newPage.id, generatedCode: '', projects: updatedProjects })
+    set({ projectPages: updatedPages, currentProject: updatedProject, currentPageId: newPage.id, projects: updatedProjects })
+    useGenerationStore.getState().setGeneratedCode('')
     localStorage.setItem('nova-projects', JSON.stringify(updatedProjects))
   },
   updatePageDeviceType: (pageId, deviceType) => {
@@ -431,7 +391,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     if (!nextPage) return
 
-    set({ projectPages: updatedPages, currentProject: updatedProject, currentPageId: nextPage.id, generatedCode: nextPage.code, projects: updatedProjects })
+    set({ projectPages: updatedPages, currentProject: updatedProject, currentPageId: nextPage.id, projects: updatedProjects })
+    useGenerationStore.getState().setGeneratedCode(nextPage.code)
     localStorage.setItem('nova-projects', JSON.stringify(updatedProjects))
   },
   updateCurrentPageCode: (code) => {
@@ -444,17 +405,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updatedProjects = projects.map((p) => p.id === currentProject.id ? updatedProject : p)
 
     set({ projectPages: updatedPages, currentProject: updatedProject, projects: updatedProjects })
-    try {
-      localStorage.setItem('nova-projects', JSON.stringify(updatedProjects))
-    } catch (e) {
-      const isQuota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || (e as DOMException & { code?: number }).code === 22)
-      if (isQuota) {
-        set({ error: pickLocale(get().locale, '存储空间不足，内容可能未完全保存，建议导出 HTML 备份。', 'Storage quota exceeded — some changes may not be saved. Export HTML to back up your work.') })
-      } else {
-        console.error('Failed to save to localStorage:', e)
-        set({ error: pickLocale(get().locale, '保存失败，请重试。', 'Save failed. Please try again.') })
-      }
-    }
+    safeSetLocalStorage('nova-projects', JSON.stringify(updatedProjects), get().locale)
 
     if (currentProject.dirName) {
       const page = updatedPages.find((p) => p.id === currentPageId)
@@ -485,13 +436,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (sizeInBytes > 2 * 1024 * 1024) {
       const sizeMB = (sizeInBytes / (1024 * 1024)).toFixed(1)
       console.warn(`Generated HTML is large (${sizeMB}MB), may impact performance`)
-      set({
-        error: pickLocale(
-          get().locale,
-          `生成的 HTML 较大 (${sizeMB}MB)，可能影响性能。建议简化内容或分页。`,
-          `Generated HTML is large (${sizeMB}MB), may impact performance. Consider simplifying or splitting into pages.`
-        )
-      })
+      useUIStore.getState().setError(pickLocale(
+        get().locale,
+        `生成的 HTML 较大 (${sizeMB}MB)，可能影响性能。建议简化内容或分页。`,
+        `Generated HTML is large (${sizeMB}MB), may impact performance. Consider simplifying or splitting into pages.`
+      ))
     }
 
     const newVersion: Version = {
@@ -521,7 +470,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { versions } = get()
     const version = versions.find((item) => item.id === versionId)
     if (!version) return
-    set({ generatedCode: version.code, activeVersionId: version.id })
+    set({ activeVersionId: version.id })
+    useGenerationStore.getState().setGeneratedCode(version.code)
     get().updateCurrentPageCode(version.code)
   },
   deleteVersion: (versionId) => {
@@ -535,7 +485,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (versionId === activeVersionId) {
       const fallback = updatedVersions[updatedVersions.length - 1] ?? null
       updates.activeVersionId = fallback?.id ?? null
-      updates.generatedCode = fallback?.code ?? ''
+      useGenerationStore.getState().setGeneratedCode(fallback?.code ?? '')
     }
 
     set(updates)
@@ -551,7 +501,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const variant = variantCandidates.find((item) => item.id === variantId)
     if (!variant) return
 
-    set({ generatedCode: variant.code })
+    useGenerationStore.getState().setGeneratedCode(variant.code)
 
     if (currentProject) {
       updateProject(currentProject.id, {
@@ -562,7 +512,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   projects: loadProjectsFromStorage(),
-  addProject: (project) => {
+  addProject: async (project) => {
     const defaultPage: Page = { id: nanoid(), name: '首页', path: '/', code: '', createdAt: Date.now(), updatedAt: Date.now() }
     const newProject: Project = {
       ...project,
@@ -579,40 +529,41 @@ export const useAppStore = create<AppState>((set, get) => ({
       messages: [],
       activeVersionId: null,
       variantCandidates: [],
-      generatedCode: '',
       versions: [],
       currentPageId: defaultPage.id,
       projectPages: [defaultPage],
     })
+    useGenerationStore.getState().setGeneratedCode('')
     localStorage.setItem('nova-projects', JSON.stringify(projects))
 
     // Async: create project dir in the configured data directory
     if (window.electronAPI?.createProjectDir) {
-      window.electronAPI.createProjectDir()
-        .then((dirName) => {
-          if (!dirName) return
-          const withDir: Project = { ...newProject, dirName }
-          const updated = get().projects.map((p) => (p.id === newProject.id ? withDir : p))
-          set({
-            projects: updated,
-            currentProject: get().currentProject?.id === newProject.id ? withDir : get().currentProject,
-          })
-          localStorage.setItem('nova-projects', JSON.stringify(updated))
-
-          return window.electronAPI!.writeProjectFile({
-            projectDirName: dirName,
-            fileName: 'meta.json',
-            content: JSON.stringify({
-              id: withDir.id,
-              name: withDir.name,
-              description: withDir.description,
-              createdAt: withDir.createdAt,
-              updatedAt: withDir.updatedAt,
-              dirName,
-            }, null, 2),
-          })
+      try {
+        const dirName = await window.electronAPI.createProjectDir()
+        if (!dirName) return
+        const withDir: Project = { ...newProject, dirName }
+        const updated = get().projects.map((p) => (p.id === newProject.id ? withDir : p))
+        set({
+          projects: updated,
+          currentProject: get().currentProject?.id === newProject.id ? withDir : get().currentProject,
         })
-        .catch((e) => console.warn('Project dir creation failed:', e))
+        localStorage.setItem('nova-projects', JSON.stringify(updated))
+
+        await window.electronAPI!.writeProjectFile({
+          projectDirName: dirName,
+          fileName: 'meta.json',
+          content: JSON.stringify({
+            id: withDir.id,
+            name: withDir.name,
+            description: withDir.description,
+            createdAt: withDir.createdAt,
+            updatedAt: withDir.updatedAt,
+            dirName,
+          }, null, 2),
+        })
+      } catch (e) {
+        console.warn('Project dir creation failed:', e)
+      }
     }
   },
   updateProject: (id, updates) => {
@@ -625,14 +576,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         : get().currentProject
 
     set({ projects, currentProject })
-    try {
-      localStorage.setItem('nova-projects', JSON.stringify(projects))
-    } catch (e) {
-      const isQuota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || (e as DOMException & { code?: number }).code === 22)
-      if (isQuota) {
-        set({ error: pickLocale(get().locale, '存储空间不足，项目可能未完全保存。', 'Storage quota exceeded — project may not be saved.') })
-      }
-    }
+    safeSetLocalStorage('nova-projects', JSON.stringify(projects), get().locale)
 
     const project = projects.find((p) => p.id === id)
     if (project?.dirName) {
@@ -660,11 +604,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       activeVersionId: isCurrentProject ? null : get().activeVersionId,
       variantCandidates: isCurrentProject ? [] : get().variantCandidates,
       messages: isCurrentProject ? [] : get().messages,
-      generatedCode: isCurrentProject ? '' : get().generatedCode,
       versions: isCurrentProject ? [] : get().versions,
       currentPageId: isCurrentProject ? null : get().currentPageId,
       projectPages: isCurrentProject ? [] : get().projectPages,
     })
+
+    if (isCurrentProject) {
+      useGenerationStore.getState().setGeneratedCode('')
+    }
 
     localStorage.setItem('nova-projects', JSON.stringify(projects))
     localStorage.removeItem(`nova-messages-${id}`)
@@ -673,7 +620,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (project?.dirName && window.electronAPI?.deleteProjectDir) {
       window.electronAPI.deleteProjectDir({ projectDirName: project.dirName }).catch((err: unknown) => {
         console.error('Failed to delete project directory:', err)
-        set({ error: pickLocale(get().locale, '项目目录删除失败，可能需要手动清理。', 'Failed to delete project directory. Manual cleanup may be needed.') })
+        useUIStore.getState().setError(pickLocale(get().locale, '项目目录删除失败，可能需要手动清理。', 'Failed to delete project directory. Manual cleanup may be needed.'))
       })
     }
   },
@@ -707,48 +654,4 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadMessages: (projectId) => {
     set({ messages: loadMessagesFromStorage(projectId) })
   },
-
-  isGenerating: false,
-  setGenerating: (generating) => set({ isGenerating: generating }),
-
-  abortController: null,
-  setAbortController: (controller) => set({ abortController: controller }),
-  cancelGeneration: () => {
-    const { abortController } = get()
-    if (!abortController) return
-    abortController.abort()
-    set({ abortController: null, isGenerating: false })
-  },
-
-  generatedCode: '',
-  setGeneratedCode: (code) => set({ generatedCode: code }),
-  briefForm: DEFAULT_BRIEF_FORM,
-  setBriefForm: (updates) => set({ briefForm: { ...get().briefForm, ...updates } }),
-  generationTimeline: [],
-  setGenerationTimeline: (steps) => set({ generationTimeline: steps }),
-  activeGenerationLabel: null,
-  setActiveGenerationLabel: (label) => set({ activeGenerationLabel: label }),
-
-  showSettings: false,
-  toggleSettings: () => set({ showSettings: !get().showSettings }),
-  isPreviewFocused: false,
-  setPreviewFocused: (focused) => set({ isPreviewFocused: focused }),
-  togglePreviewFocus: () => set({ isPreviewFocused: !get().isPreviewFocused }),
-  showSidebar: true,
-  toggleSidebar: () => set({ showSidebar: !get().showSidebar }),
-  chatCollapsed: false,
-  toggleChatCollapsed: () => set({ chatCollapsed: !get().chatCollapsed }),
-
-  error: null,
-  setError: (error) => {
-    set({ error })
-    if (error) {
-      setTimeout(() => {
-        if (useAppStore.getState().error === error) set({ error: null })
-      }, 6000)
-    }
-  },
-
-  success: null,
-  setSuccess: (msg) => set({ success: msg }),
 }))

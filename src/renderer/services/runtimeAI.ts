@@ -16,7 +16,6 @@ const ANTHROPIC_MODELS = [
   'claude-haiku-4-5',
   'claude-opus-4-5',
   'claude-sonnet-4-5',
-  'claude-haiku-4-5',
   'claude-3-7-sonnet-20250219',
   'claude-3-5-sonnet-20241022',
   'claude-3-5-haiku-20241022',
@@ -45,23 +44,23 @@ export class RuntimeAIService {
 
   async testConnection(): Promise<TestResult> {
     const start = Date.now()
-    const timeout = 30000 // 30s timeout
+    const timeout = this.config.timeout || 300000
     const attempt = async (): Promise<string> => {
       return this.generate('回复"连接成功"四个字', [], true)
     }
 
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('Connection test timed out after 30s')), timeout)
+    const createTimeoutPromise = () => new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Connection test timed out after ${Math.round(timeout / 1000)}s`)), timeout)
     )
 
     try {
-      const response = await Promise.race([attempt(), timeoutPromise])
+      const response = await Promise.race([attempt(), createTimeoutPromise()])
       return { success: true, latency: Date.now() - start, model: this.config.model, response: response.slice(0, 100) }
     } catch {
       // One retry after 1s
       await new Promise(r => setTimeout(r, 1000))
       try {
-        const response = await Promise.race([attempt(), timeoutPromise])
+        const response = await Promise.race([attempt(), createTimeoutPromise()])
         return { success: true, latency: Date.now() - start, model: this.config.model, response: response.slice(0, 100) }
       } catch (error: unknown) {
         return { success: false, latency: Date.now() - start, error: error instanceof Error ? error.message : '连接失败' }
@@ -164,7 +163,7 @@ export class RuntimeAIService {
     const onChunk = (chunk: string) => { queue.push(chunk); wakeup?.(); wakeup = null }
 
     const streamPromise = api.proxyStream(
-      { id, url, method: 'POST', headers, body: JSON.stringify(body), timeout: 300000 },
+      { id, url, method: 'POST', headers, body: JSON.stringify(body), timeout: this.config.timeout || 300000 },
       onChunk,
     ).then((res) => {
       if (!res.ok) throw new Error(`API error (${res.status}): ${(res.body ?? '').slice(0, 200)}`)
@@ -225,20 +224,29 @@ export class RuntimeAIService {
       messages: this.buildOpenAIMessages(messages, imageData),
     }
     let buf = ''
+    let rawResponse = ''
+    let emittedText = false
     for await (const raw of this.ipcStreamRaw(url, headers, body, signal)) {
+      rawResponse += raw
       buf += raw
-      const lines = buf.split('\n')
+      const lines = buf.split(/\r?\n/)
       buf = lines.pop() ?? ''
       for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        const data = line.slice(6).trim()
-        if (!data || data === '[DONE]') continue
-        try {
-          const parsed = JSON.parse(data)
-          const text = parsed.choices?.[0]?.delta?.content
-          if (text) yield text as string
-        } catch { /* skip */ }
+        const text = this.parseOpenAICompatibleStreamLine(line)
+        if (text) {
+          emittedText = true
+          yield text
+        }
       }
+    }
+    const trailingText = this.parseOpenAICompatibleStreamLine(buf)
+    if (trailingText) {
+      emittedText = true
+      yield trailingText
+    }
+    if (!emittedText && rawResponse.trim()) {
+      const fallbackText = this.parseOpenAICompatibleFinalPayload(rawResponse)
+      if (fallbackText) yield fallbackText
     }
   }
 
@@ -280,6 +288,7 @@ export class RuntimeAIService {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'x-nova-timeout': String(this.config.timeout || 300000),
         'x-api-key': this.config.apiKey,
         'anthropic-version': '2023-06-01',
         ...this.config.customHeaders,
@@ -337,6 +346,7 @@ export class RuntimeAIService {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'x-nova-timeout': String(this.config.timeout || 300000),
         ...extraHeaders,
         ...this.config.customHeaders,
       },
@@ -360,22 +370,35 @@ export class RuntimeAIService {
 
     const reader = response.body!.getReader()
     const decoder = new TextDecoder()
+    let buf = ''
+    let rawResponse = ''
+    let emittedText = false
 
     try {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         const chunk = decoder.decode(value, { stream: true })
-        for (const line of chunk.split('\n')) {
-          if (!line.startsWith('data: ')) continue
-          const data = line.slice(6).trim()
-          if (!data || data === '[DONE]') continue
-          try {
-            const parsed = JSON.parse(data)
-            const text = parsed.choices?.[0]?.delta?.content
-            if (text) yield text
-          } catch { /* skip malformed SSE lines */ }
+        rawResponse += chunk
+        buf += chunk
+        const lines = buf.split(/\r?\n/)
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          const text = this.parseOpenAICompatibleStreamLine(line)
+          if (text) {
+            emittedText = true
+            yield text
+          }
         }
+      }
+      const trailingText = this.parseOpenAICompatibleStreamLine(buf)
+      if (trailingText) {
+        emittedText = true
+        yield trailingText
+      }
+      if (!emittedText && rawResponse.trim()) {
+        const fallbackText = this.parseOpenAICompatibleFinalPayload(rawResponse)
+        if (fallbackText) yield fallbackText
       }
     } finally {
       reader.releaseLock()
@@ -601,7 +624,13 @@ export class RuntimeAIService {
     }
 
     const proxyUrl = this.getProxyUrl(targetUrl)
-    return fetch(proxyUrl, options)
+    return fetch(proxyUrl, {
+      ...options,
+      headers: {
+        ...(options.headers as Record<string, string> | undefined),
+        'x-nova-timeout': String(this.config.timeout || 300000),
+      },
+    })
   }
 
   private getProxyUrl(targetUrl: string): string {
@@ -637,19 +666,69 @@ export class RuntimeAIService {
     }
   }
 
-  private buildChatUrl(): string {
-    const apiPath = this.config.apiPath || '/v1/chat/completions'
+  private parseOpenAICompatibleStreamLine(line: string): string {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith(':') || trimmed.startsWith('event:') || trimmed.startsWith('id:')) {
+      return ''
+    }
 
-    // Prevent path injection: block // (protocol-relative), javascript:, data:
+    const data = trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed
+    if (!data || data === '[DONE]') return ''
+
+    try {
+      return this.extractOpenAICompatibleText(JSON.parse(data))
+    } catch {
+      return ''
+    }
+  }
+
+  private parseOpenAICompatibleFinalPayload(rawResponse: string): string {
+    const trimmed = rawResponse.trim()
+
+    try {
+      const text = this.extractOpenAICompatibleText(JSON.parse(trimmed))
+      if (text) return text
+    } catch { /* try line-based payloads below */ }
+
+    const parts: string[] = []
+    for (const line of trimmed.split(/\r?\n/)) {
+      const text = this.parseOpenAICompatibleStreamLine(line)
+      if (text) parts.push(text)
+    }
+    return parts.join('')
+  }
+
+  private extractOpenAICompatibleText(data: unknown): string {
+    if (!data || typeof data !== 'object') return ''
+    const obj = data as Record<string, unknown>
+    const choices = obj.choices
+    if (!Array.isArray(choices) || !choices[0] || typeof choices[0] !== 'object') return ''
+
+    const choice = choices[0] as Record<string, unknown>
+    const delta = choice.delta as Record<string, unknown> | undefined
+    if (delta && typeof delta.content === 'string') return delta.content
+
+    const message = choice.message as Record<string, unknown> | undefined
+    if (message && typeof message.content === 'string') return message.content
+
+    return typeof choice.text === 'string' ? choice.text : ''
+  }
+
+  private buildChatUrl(): string {
+    const base = this.normalizeBaseUrl(this.config.baseUrl)
+    const apiPath = this.config.apiPath || (base.endsWith('/v1') ? '/chat/completions' : '/v1/chat/completions')
+
+    // Prevent path injection: block // (protocol-relative), javascript:, data:, file:
     if (apiPath.includes('//') || /^(javascript|data|file):/i.test(apiPath)) {
       throw new Error('Invalid API path: potential injection detected')
     }
 
-    return `${this.normalizeBaseUrl(this.config.baseUrl)}${apiPath.startsWith('/') ? apiPath : `/${apiPath}`}`
+    return `${base}${apiPath.startsWith('/') ? apiPath : `/${apiPath}`}`
   }
 
   private getModelsUrl(provider: AIProvider): string {
     const base = this.normalizeBaseUrl(this.config.baseUrl)
+    const hasV1 = base.endsWith('/v1')
 
     switch (provider) {
       case 'openai':
@@ -658,14 +737,14 @@ export class RuntimeAIService {
       case 'moonshot':
       case 'nvidia':
       case 'custom':
-        return `${base}/v1/models`
+        return hasV1 ? `${base}/models` : `${base}/v1/models`
       case 'zhipu':
       case 'qwen':
       case 'minimax':
       case 'baichuan':
         return `${base}/models`
       default:
-        return `${base}/v1/models`
+        return hasV1 ? `${base}/models` : `${base}/v1/models`
     }
   }
 

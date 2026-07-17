@@ -2,6 +2,16 @@ import { defineConfig, Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
+const DEFAULT_PROXY_TIMEOUT_MS = 300000
+const MAX_PROXY_TIMEOUT_MS = 900000
+
+function parseProxyTimeout(value: string | string[] | undefined): number {
+  const rawValue = Array.isArray(value) ? value[0] : value
+  const parsed = Number(rawValue)
+  if (!Number.isFinite(parsed)) return DEFAULT_PROXY_TIMEOUT_MS
+  return Math.min(MAX_PROXY_TIMEOUT_MS, Math.max(10000, parsed))
+}
+
 // API代理插件
 function apiProxyPlugin(): Plugin {
   return {
@@ -13,7 +23,7 @@ function apiProxyPlugin(): Plugin {
         // 设置CORS头
         res.setHeader('Access-Control-Allow-Origin', '*')
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version')
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version, x-nova-timeout')
 
         if (req.method === 'OPTIONS') {
           res.statusCode = 200
@@ -69,7 +79,8 @@ function apiProxyPlugin(): Plugin {
 
             // 发送请求到目标API - 增加超时时间
             const controller = new AbortController()
-            const timeout = setTimeout(() => controller.abort(), 300000) // 5分钟超时
+            const timeoutMs = parseProxyTimeout(req.headers['x-nova-timeout'])
+            const timeout = setTimeout(() => controller.abort(), timeoutMs)
             
             try {
               const response = await fetch(targetUrl, {
@@ -144,9 +155,17 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    target: 'es2020',
+    chunkSizeWarningLimit: 600,
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'index.html'),
+      },
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom'],
+          'zustand': ['zustand'],
+        },
       },
     },
   },

@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useLocale } from '../hooks/useLocale'
 import { Locale, pickLocale } from '../locale'
 import { RuntimeAIService } from '../services/runtimeAI'
-import { getVisibleTextLength } from '../utils/htmlUtils'
+import { commandHistory } from '../services/commandHistory'
+import { DeletePageCommand } from '../services/commands'
+import { getVisibleTextLength, looksIncompleteGeneratedHTML, looksLikeBlankShell } from '../utils/htmlUtils'
 import { useAIConfigStore } from '../stores/aiConfigStore'
 import { useAppStore } from '../stores/appStore'
+import { useUIStore } from '../stores/uiStore'
+import { useGenerationStore } from '../stores/generationStore'
 
 
 type ViewportMode = 'desktop' | 'tablet' | 'mobile'
@@ -21,6 +26,7 @@ type PreviewDiagnostics = {
   scriptCount: number
   canvasCount: number
   likelyScriptDependent: boolean
+  invalidPage: boolean
 }
 
 interface PreviewPanelProps {
@@ -160,7 +166,13 @@ function getPreviewDiagnostics(html: string): PreviewDiagnostics {
       (scriptCount >= 2 && !hasMeaningfulStructure)
     )
 
-  return { visibleTextLength, scriptCount, canvasCount, likelyScriptDependent }
+  return {
+    visibleTextLength,
+    scriptCount,
+    canvasCount,
+    likelyScriptDependent,
+    invalidPage: !isSlide && (looksIncompleteGeneratedHTML(html) || looksLikeBlankShell(html)),
+  }
 }
 
 function buildPreviewDocument(html: string, safeMode: boolean): string {
@@ -176,7 +188,7 @@ function buildPreviewDocument(html: string, safeMode: boolean): string {
     previewHtml = previewHtml.replace(/\s+on\w+\s*=\s*[^\s>]*/gi, '')
   }
 
-  const navScript = `<script data-nova-nav>(function(){document.addEventListener('click',function(e){var a=e.target.closest('a[href]');if(!a)return;var h=a.getAttribute('href');if(!h||h.startsWith('#')||h.startsWith('javascript:')||h.startsWith('mailto:')||h.startsWith('tel:')||/^https?:\/\//.test(h))return;e.preventDefault();window.parent.postMessage({type:'nova-navigate',href:h},'*');},true);})();<\/script>`
+  const navScript = `<script data-nova-nav>(function(){document.addEventListener('click',function(e){var a=e.target.closest('a[href]');if(!a)return;var h=a.getAttribute('href');if(!h||h.startsWith('#')||h.startsWith('javascript:')||h.startsWith('mailto:')||h.startsWith('tel:')||/^https?:\\/\\//.test(h))return;e.preventDefault();window.parent.postMessage({type:'nova-navigate',href:h},'*');},true);})();</script>`
 
   const injectedHead = `
 ${navScript}
@@ -210,9 +222,22 @@ body { background: #ffffff !important; color: #171717 !important; }
 }
 
 export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
-  const { activeVersionId, currentProject, generatedCode, isGenerating, setError, setSuccess, versions,
-    currentPageId, projectPages, setCurrentPage, addPage, deletePage, addVersion,
-    setGeneratedCode, updateCurrentPageCode, restoreVersion } = useAppStore()
+  const { activeVersionId, currentProject, versions,
+    currentPageId, projectPages, setCurrentPage, addPage, addVersion,
+    updateCurrentPageCode, restoreVersion } = useAppStore(useShallow((s) => ({
+      activeVersionId: s.activeVersionId,
+      currentProject: s.currentProject,
+      versions: s.versions,
+      currentPageId: s.currentPageId,
+      projectPages: s.projectPages,
+      setCurrentPage: s.setCurrentPage,
+      addPage: s.addPage,
+      addVersion: s.addVersion,
+      updateCurrentPageCode: s.updateCurrentPageCode,
+      restoreVersion: s.restoreVersion,
+    })))
+  const { setError, setSuccess } = useUIStore(useShallow((s) => ({ setError: s.setError, setSuccess: s.setSuccess })))
+  const { isGenerating, generatedCode, setGeneratedCode } = useGenerationStore(useShallow((s) => ({ isGenerating: s.isGenerating, generatedCode: s.generatedCode, setGeneratedCode: s.setGeneratedCode })))
   const { getActiveConfig } = useAIConfigStore()
   const runtimeConfig = useMemo(() => getActiveConfig(), [getActiveConfig])
   const { locale, text } = useLocale()
@@ -340,10 +365,11 @@ export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
 
   const activeViewport = viewportOptions.find((o) => o.id === viewportMode) || viewportOptions[0]
   const hasPreview = generatedCode.trim().length > 0
-  const useSafePreview = hasPreview && diagnostics.likelyScriptDependent
+  const hasRenderablePreview = hasPreview && !diagnostics.invalidPage
+  const useSafePreview = hasRenderablePreview && diagnostics.likelyScriptDependent
   const previewDocument = useMemo(
-    () => (hasPreview ? buildPreviewDocument(generatedCode, useSafePreview) : ''),
-    [generatedCode, hasPreview, useSafePreview],
+    () => (hasRenderablePreview ? buildPreviewDocument(generatedCode, useSafePreview) : ''),
+    [generatedCode, hasRenderablePreview, useSafePreview],
   )
   // Always include allow-scripts so the injected navigation interception script runs.
   // Safe mode already strips dangerous external scripts from the HTML itself.
@@ -533,7 +559,7 @@ export default function PreviewPanel({ focused = false }: PreviewPanelProps) {
 
         // Stats/numbers: look for large number elements
         const stats = Array.from(el.querySelectorAll('h2, h3, [class*="stat"], [class*="number"], [class*="metric"]'))
-          .filter(n => /^\d[\d,\.%+kKmMbB\s]*$/.test(n.textContent?.trim() || ''))
+          .filter(n => /^\d[\d,.%+kKmMbB\s]*$/.test(n.textContent?.trim() || ''))
           .map(n => n.textContent?.trim() || '')
 
         slide.addText(headline, {
@@ -985,7 +1011,7 @@ onUnmounted(() => {
                 {projectPages.length > 1 && (
                   confirmDeletePageId === page.id ? (
                     <button
-                      onClick={() => { deletePage(page.id); setConfirmDeletePageId(null) }}
+                      onClick={() => { commandHistory.execute(new DeletePageCommand(currentProject.id, page.id)); setConfirmDeletePageId(null) }}
                       className="absolute right-1 top-1/2 -translate-y-1/2 rounded px-1 text-[10px] font-semibold transition-all opacity-100"
                       style={{ background: 'rgba(220,38,38,0.12)', color: '#dc2626', border: '1px solid rgba(220,38,38,0.25)' }}
                       title={text('再次点击确认删除', 'Click again to confirm deletion')}
@@ -1078,7 +1104,38 @@ onUnmounted(() => {
             )}
 
             {/* Preview rail / Code view — mutually exclusive */}
-            {showSource ? null : <div
+            {!showSource && diagnostics.invalidPage && (
+              <div className={`${frameRailClassName} items-center justify-center px-6 py-10`} style={{ borderColor: 'var(--border-subtle)', background: 'rgba(120, 98, 85, 0.06)' }}>
+                <div className="panel-card max-w-xl rounded-[24px] p-6 text-center">
+                  <div
+                    className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-[18px]"
+                    style={{ background: 'rgba(245, 158, 11, 0.14)', color: '#b45309' }}
+                  >
+                    <svg className="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    {text('当前 HTML 无法有效预览', 'This HTML cannot be previewed')}
+                  </h3>
+                  <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-secondary)' }}>
+                    {text(
+                      '这份结果像是空白页、截断代码或非页面内容。请重新生成，或打开代码视图检查模型实际返回内容。',
+                      'This result looks like a blank page, truncated code, or non-page content. Regenerate it, or open the code view to inspect the model output.',
+                    )}
+                  </p>
+                  <div className="mt-4 flex flex-wrap justify-center gap-2">
+                    <span className="badge badge-accent">{metadata.lineCount} {text('行', 'lines')}</span>
+                    <span className="badge badge-accent">{diagnostics.visibleTextLength} {text('字', 'chars')}</span>
+                    <button className="btn btn-ghost h-8 text-xs" onClick={() => setShowSource(true)}>
+                      {text('查看代码', 'View code')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!showSource && !diagnostics.invalidPage && <div
               ref={railRef}
               className={frameRailClassName}
               style={{ borderColor: 'var(--border-subtle)', background: 'rgba(120, 98, 85, 0.06)' }}

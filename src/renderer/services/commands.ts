@@ -8,12 +8,10 @@ import type { Page, Project } from '../stores/appStore'
  */
 export class DeletePageCommand implements Command {
   description: string
-  private projectId: string
   private pageId: string
   private deletedPage: Page | null
 
   constructor(projectId: string, pageId: string) {
-    this.projectId = projectId
     this.pageId = pageId
 
     const store = useAppStore.getState()
@@ -36,6 +34,9 @@ export class DeletePageCommand implements Command {
 
     const updatedPages = [...(currentProject.pages || []), this.deletedPage!]
     store.updateProject(currentProject.id, { pages: updatedPages })
+    // Sync projectPages state — updateProject only updates projects/currentProject,
+    // but deletePage had also set projectPages, so we must restore it here too.
+    useAppStore.setState({ projectPages: updatedPages })
   }
 }
 

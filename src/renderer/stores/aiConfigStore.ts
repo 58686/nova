@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { nanoid } from 'nanoid'
-import { AIConfig, AIProvider, PROVIDERS } from '../services/ai'
+import { AIConfig, AIProvider } from '../services/ai'
 import { saveSecurePresets, loadSecurePresets } from '../services/secureDataMigration'
 
 export interface AIConfigPreset {
@@ -14,13 +14,15 @@ export interface AIConfigPreset {
 interface AIConfigStore {
   presets: AIConfigPreset[]
   activePresetId: string | null
-  
+  isInitialized: boolean
+
   // 操作
   addPreset: (name: string, config: AIConfig) => void
   updatePreset: (id: string, updates: Partial<AIConfigPreset>) => void
   deletePreset: (id: string) => void
   setActivePreset: (id: string) => void
-  getActiveConfig: () => AIConfig | null
+  getActiveConfig: () => AIConfig
+  initializeSecureStore: () => Promise<void>
 }
 
 const DEFAULT_CONFIGS: AIConfigPreset[] = [
@@ -33,9 +35,9 @@ const DEFAULT_CONFIGS: AIConfigPreset[] = [
       baseUrl: 'https://api.anthropic.com',
       apiPath: '/v1/messages',
       model: 'claude-3-5-sonnet-20241022',
-      temperature: 0.7,
+      temperature: 0.5,
       maxTokens: 16384,
-      timeout: 120000,
+      timeout: 300000,
     },
     isActive: false,
     createdAt: Date.now(),
@@ -49,9 +51,9 @@ const DEFAULT_CONFIGS: AIConfigPreset[] = [
       baseUrl: 'https://api.openai.com',
       apiPath: '/v1/chat/completions',
       model: 'gpt-4o',
-      temperature: 0.7,
+      temperature: 0.5,
       maxTokens: 16384,
-      timeout: 120000,
+      timeout: 300000,
     },
     isActive: false,
     createdAt: Date.now(),
@@ -65,9 +67,9 @@ const DEFAULT_CONFIGS: AIConfigPreset[] = [
       baseUrl: 'https://integrate.api.nvidia.com',
       apiPath: '/v1/chat/completions',
       model: 'meta/llama-3.1-70b-instruct',
-      temperature: 0.7,
+      temperature: 0.5,
       maxTokens: 16384,
-      timeout: 180000,
+      timeout: 300000,
     },
     isActive: false,
     createdAt: Date.now(),
@@ -81,9 +83,9 @@ const DEFAULT_CONFIGS: AIConfigPreset[] = [
       baseUrl: 'https://api.deepseek.com',
       apiPath: '/v1/chat/completions',
       model: 'deepseek-coder',
-      temperature: 0.7,
+      temperature: 0.5,
       maxTokens: 16384,
-      timeout: 120000,
+      timeout: 300000,
     },
     isActive: false,
     createdAt: Date.now(),
@@ -119,9 +121,40 @@ async function savePresetsSecure(presets: AIConfigPreset[]) {
   }
 }
 
+// Debounced save: avoid race condition when presets are modified rapidly
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+function savePresetsDebounced(presets: AIConfigPreset[]) {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    savePresetsSecure(presets)
+  }, 500)
+}
+
 export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
   presets: loadPresets(),
   activePresetId: localStorage.getItem('nova-active-preset') || null,
+  isInitialized: false,
+
+  initializeSecureStore: async () => {
+    try {
+      const securePresets = await loadSecurePresets()
+      if (securePresets && securePresets.length > 0) {
+        // Preserve current activePresetId if it still exists
+        const currentActive = get().activePresetId
+        const stillExists = securePresets.some(p => p.id === currentActive)
+        set({
+          presets: securePresets,
+          activePresetId: stillExists ? currentActive : null,
+          isInitialized: true,
+        })
+      } else {
+        set({ isInitialized: true })
+      }
+    } catch (e) {
+      console.warn('Failed to load secure presets, using defaults:', e)
+      set({ isInitialized: true })
+    }
+  },
 
   addPreset: (name, config) => {
     const newPreset: AIConfigPreset = {
@@ -134,7 +167,7 @@ export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
 
     const presets = [...get().presets, newPreset]
     set({ presets })
-    savePresetsSecure(presets) // Use encrypted save
+    savePresetsDebounced(presets) // Use encrypted save
   },
   
   updatePreset: (id, updates) => {
@@ -142,7 +175,7 @@ export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
       p.id === id ? { ...p, ...updates } : p
     )
     set({ presets })
-    savePresetsSecure(presets) // Use encrypted save
+    savePresetsDebounced(presets) // Use encrypted save
   },
 
   deletePreset: (id) => {
@@ -150,7 +183,7 @@ export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
     const activePresetId = get().activePresetId === id ? null : get().activePresetId
 
     set({ presets, activePresetId })
-    savePresetsSecure(presets) // Use encrypted save
+    savePresetsDebounced(presets) // Use encrypted save
     
     if (activePresetId) {
       localStorage.setItem('nova-active-preset', activePresetId)
@@ -166,7 +199,7 @@ export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
     }))
 
     set({ presets, activePresetId: id })
-    savePresetsSecure(presets) // Use encrypted save
+    savePresetsDebounced(presets) // Use encrypted save
     localStorage.setItem('nova-active-preset', id)
   },
   
@@ -192,9 +225,9 @@ export const useAIConfigStore = create<AIConfigStore>((set, get) => ({
       apiKey: '',
       baseUrl: 'https://api.anthropic.com',
       model: 'claude-3-5-sonnet-20241022',
-      temperature: 0.7,
+      temperature: 0.5,
       maxTokens: 16384,
-      timeout: 120000,
+      timeout: 300000,
     }
   },
 }))

@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Locale, pickLocale } from '../locale'
 import { useLocale } from '../hooks/useLocale'
 import { useAppStore } from '../stores/appStore'
+import { useUIStore } from '../stores/uiStore'
 
 function timeAgo(timestamp: number, locale: Locale): string {
   const diff = Date.now() - timestamp
@@ -19,7 +21,17 @@ function timeAgo(timestamp: number, locale: Locale): string {
 }
 
 export default function Sidebar() {
-  const { projects, currentProject, setCurrentProject, deleteProject, addProject, showSidebar, setSuccess } = useAppStore()
+  const { projects, currentProject, setCurrentProject, deleteProject, addProject } = useAppStore(useShallow(s => ({
+    projects: s.projects,
+    currentProject: s.currentProject,
+    setCurrentProject: s.setCurrentProject,
+    deleteProject: s.deleteProject,
+    addProject: s.addProject,
+  })))
+  const { showSidebar, setSuccess } = useUIStore(useShallow(s => ({
+    showSidebar: s.showSidebar,
+    setSuccess: s.setSuccess,
+  })))
   const { locale, text } = useLocale()
   const [searchQuery, setSearchQuery] = useState('')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
