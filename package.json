@@ -72,6 +72,7 @@
     "win": {
       "requestedExecutionLevel": "asInvoker",
       "sign": null,
+      "signAndEditExecutable": false,
       "target": [
         {
           "target": "nsis",
