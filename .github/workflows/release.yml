@@ -32,6 +32,7 @@ jobs:
         run: npm run electron:build -- --publish never
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://cdn.npmmirror.com/binaries/electron-builder-binaries/
           DEBUG: electron-builder
 
       - name: List build output
@@ -42,16 +43,18 @@ jobs:
 
       - name: Generate checksums
         run: |
-          Get-FileHash release\Nova-Setup-*.exe -Algorithm SHA256 | Select-Object Hash, @{Name="File";Expression={$_.Path | Split-Path -Leaf}} | Out-File -FilePath checksums.txt
-          Get-FileHash release\Nova-*-win.zip -Algorithm SHA256 | Select-Object Hash, @{Name="File";Expression={$_.Path | Split-Path -Leaf}} | Out-File -FilePath checksums.txt -Append
+          Get-ChildItem release -File -Filter "Nova*.exe" |
+            Get-FileHash -Algorithm SHA256 |
+            Select-Object Hash, @{Name="File";Expression={$_.Path | Split-Path -Leaf}} |
+            Out-File -FilePath checksums.txt
         shell: pwsh
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            release/Nova-Setup-*.exe
-            release/Nova-*-win.zip
+            release/Nova*.exe
+            release/*.blockmap
             checksums.txt
           body_path: RELEASE_NOTES_v0.3.0.md
           draft: false
